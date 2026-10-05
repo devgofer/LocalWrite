@@ -15,6 +15,11 @@ struct LocalWriteMacApp: App {
                 Text(controller.accessibilityGranted ? "Accessibility Ready" : "Accessibility Required")
             }
 
+            HStack {
+                Image(systemName: controller.speechAuthorized ? "checkmark.circle.fill" : "exclamationmark.circle")
+                Text(controller.speechAuthorized ? "Speech Ready" : "Speech Permission Required")
+            }
+
             if !controller.accessibilityGranted {
                 Button("Enable Accessibility") {
                     controller.requestAccessibility()
@@ -33,10 +38,20 @@ struct LocalWriteMacApp: App {
 
             Divider()
 
+            SettingsLink {
+                Text("Settings…")
+            }
+
+            Divider()
+
             Button("Quit LocalWrite") {
                 NSApplication.shared.terminate(nil)
             }
         }
         .menuBarExtraStyle(.menu)
+
+        Settings {
+            LocalWriteSettingsView(controller: controller)
+        }
     }
 }
