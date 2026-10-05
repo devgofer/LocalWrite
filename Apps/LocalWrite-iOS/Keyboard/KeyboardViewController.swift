@@ -1,6 +1,5 @@
 import UIKit
 import LocalWriteCore
-import FoundationModels
 
 @MainActor
 final class KeyboardViewController: UIInputViewController {
