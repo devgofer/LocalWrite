@@ -24,7 +24,7 @@ struct LocalWriteSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("Current shortcut: (modifierLabel) + Space")
+                Text("Current shortcut: \\(modifierLabel) + Space")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
