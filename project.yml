@@ -1,0 +1,89 @@
+name: LocalWrite
+
+options:
+  deploymentTarget:
+    macOS: "26.0"
+    iOS: "26.0"
+  createIntermediateGroups: true
+  groupOrdering: []
+  developmentLanguage: en
+  xcodeVersion: "26.0"
+
+packages:
+  LocalWriteCore:
+    path: .
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  LocalWriteMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/LocalWrite-macOS
+    dependencies:
+      - package: LocalWriteCore
+        product: LocalWriteCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.devgofer.LocalWrite
+        INFOPLIST_FILE: Apps/LocalWrite-macOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Apps/LocalWrite-macOS/LocalWrite.entitlements
+        PRODUCT_NAME: LocalWrite
+        SWIFT_VERSION: "6.0"
+    scheme:
+      testTargets:
+        - LocalWriteCoreTests
+
+  LocalWriteiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Apps/LocalWrite-iOS/App
+    dependencies:
+      - target: LocalWriteKeyboard
+        embed: true
+      - package: LocalWriteCore
+        product: LocalWriteCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.devgofer.LocalWrite.iOS
+        INFOPLIST_FILE: Apps/LocalWrite-iOS/App/Info.plist
+        PRODUCT_NAME: LocalWrite
+        SWIFT_VERSION: "6.0"
+
+  LocalWriteKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Apps/LocalWrite-iOS/Keyboard
+    dependencies:
+      - package: LocalWriteCore
+        product: LocalWriteCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.devgofer.LocalWrite.iOS.Keyboard
+        INFOPLIST_FILE: Apps/LocalWrite-iOS/Keyboard/Info.plist
+        PRODUCT_NAME: LocalWriteKeyboard
+        SWIFT_VERSION: "6.0"
+
+schemes:
+  LocalWriteMac:
+    build:
+      targets:
+        LocalWriteMac: all
+        LocalWriteCoreTests: [test]
+    test:
+      targets:
+        - name: LocalWriteCoreTests
+          parallelizable: true
+
+  LocalWriteiOS:
+    build:
+      targets:
+        LocalWriteiOS: all
+        LocalWriteKeyboard: all
