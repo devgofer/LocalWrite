@@ -1,6 +1,4 @@
 import SwiftUI
-import Speech
-
 struct LocalWriteSettingsView: View {
     @ObservedObject var controller: LocalWriteController
 
@@ -27,19 +25,6 @@ struct LocalWriteSettingsView: View {
                 }
 
                 Text("Current shortcut: (modifierLabel) + Space")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Voice") {
-                HStack {
-                    Text("Silence timeout")
-                    Spacer()
-                    Text(String(format: "%.2f sec", LocalWriteSettings.silenceTimeout))
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("LocalWrite automatically finishes after this much silence.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
