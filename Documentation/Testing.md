@@ -50,14 +50,25 @@ The output should become easier to read without becoming formal or changing the 
 
 ## iOS manual QA
 
+The current iOS keyboard target is a platform-compatible extension shell. Apple does not grant third-party custom keyboards microphone access, so voice capture is intentionally tested in the containing LocalWrite app rather than inside the keyboard extension.
+
+### Keyboard extension
+
 - [ ] Install and enable LocalWrite keyboard
 - [ ] Globe button switches keyboards
-- [ ] Microphone button starts recording
-- [ ] Speech stops automatically after silence
-- [ ] Foundation Model refines the transcript
-- [ ] textDocumentProxy.insertText() inserts directly at cursor
+- [ ] Keyboard appears without requesting network/full-access permissions
+- [ ] Keyboard does not attempt microphone capture
 - [ ] Secure text fields fall back to the system keyboard
 - [ ] Keyboard works in compact and regular widths
-- [ ] Keyboard does not retain previous transcript after insertion
+- [ ] Keyboard does not retain stale state after dismissal
 
-Apple notes that custom keyboards run in a separate process with memory limits, so memory usage should be checked on multiple device models.
+### iOS app voice prototype
+
+- [ ] Microphone permission is granted
+- [ ] Speech Recognition permission is granted
+- [ ] On-device speech recognition is supported for the selected locale
+- [ ] Speech stops automatically after acoustic silence
+- [ ] Foundation Model availability is checked before refinement
+- [ ] Refined text is displayed correctly
+
+Apple's current custom keyboard documentation explicitly lists no microphone access for keyboards without open access, and custom keyboards remain sandboxed in a separate process. This limitation is a product constraint, not a LocalWrite implementation failure.
