@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>LocalWrite</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>LocalWrite uses your microphone to turn speech into text.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>LocalWrite uses speech recognition to transcribe your voice.</string>
+</dict>
+</plist>
