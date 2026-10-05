@@ -12,7 +12,7 @@ The app checks model availability at runtime rather than assuming every device c
 
 The speech layer requests on-device recognition with `requiresOnDeviceRecognition = true`.
 
-Apple notes that this setting prevents the speech request from sending audio over the network only when the selected speech recognizer supports on-device recognition. LocalWrite therefore checks `supportsOnDeviceRecognition` before starting. citeturn0search3turn0search9
+Apple notes that this setting prevents the speech request from sending audio over the network only when the selected speech recognizer supports on-device recognition. LocalWrite therefore checks `supportsOnDeviceRecognition` before starting.
 
 ## macOS
 
@@ -24,7 +24,7 @@ Accessibility permission is required for this insertion mechanism.
 
 The iOS custom keyboard is intentionally non-networked with `RequestsOpenAccess = false`.
 
-Apple's current custom keyboard documentation states that keyboards without open access have no microphone access. This means LocalWrite cannot truthfully provide microphone recording directly inside the third-party keyboard extension. citeturn2search0turn2search1
+Apple's current custom keyboard documentation states that keyboards without open access have no microphone access. This means LocalWrite cannot truthfully provide microphone recording directly inside the third-party keyboard extension.
 
 The iOS keyboard target therefore does not attempt to capture audio. Its current role is the keyboard-extension shell and keyboard-switching integration. The containing LocalWrite app remains the place for future voice-capture experiments that comply with Apple's extension restrictions.
 
