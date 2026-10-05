@@ -15,18 +15,26 @@ No extra "Insert" step.
 The primary interaction is intentionally tiny:
 
 1. Focus any text field.
-2. Trigger LocalWrite with a keyboard shortcut.
+2. Trigger LocalWrite with the configured keyboard shortcut.
 3. A small capsule appears near the active writing area.
-4. Speak.
-5. Stop speaking.
-6. LocalWrite refines the transcript and inserts it automatically.
-7. The capsule disappears.
+4. Speak naturally.
+5. Stop speaking; after a short silence, LocalWrite finishes listening automatically.
+6. The transcript is lightly refined on-device.
+7. The refined text is inserted automatically.
+8. The capsule disappears.
 
 The visual direction is inspired by the simplicity of Typeless: one compact capsule, minimal controls, almost no UI chrome. The product should feel like a native interaction rather than another editor window.
 
 ### iOS
 
-LocalWrite will eventually ship as a custom keyboard. The keyboard provides the microphone interaction while the shared LocalWriteCore package handles refinement.
+LocalWrite ships as a custom keyboard foundation. The keyboard provides the microphone interaction while the shared LocalWriteCore package handles refinement.
+
+1. Open the LocalWrite keyboard.
+2. Tap the microphone.
+3. Speak naturally.
+4. After a short silence, listening finishes automatically.
+5. LocalWrite refines the transcript.
+6. The keyboard inserts the result through `textDocumentProxy.insertText()`.
 
 ## Core principle
 
@@ -42,6 +50,7 @@ It should:
 - split long spoken sentences when useful
 - preserve intentional wording
 - never invent information
+- never summarize
 - never make writing unnecessarily formal
 
 Example:
@@ -82,7 +91,7 @@ LocalWrite/
 │   └── LocalWriteCore/
 │       ├── AI/
 │       ├── Models/
-│       └── Refinement/
+│       └── Speech/
 ├── Tests/
 │   └── LocalWriteCoreTests/
 ├── Apps/
@@ -97,19 +106,20 @@ LocalWrite/
 - [x] Milestone 2 — macOS capsule + global shortcut
 - [x] Milestone 3 — speech recognition → refinement → automatic insertion
 - [x] Milestone 4 — iOS custom keyboard foundation
-- [ ] Milestone 5 — polish, settings, evaluation suite
+- [x] Milestone 5 — settings, permission onboarding, and evaluation foundations
+- [ ] Milestone 6 — final polish, Xcode target assembly, and device validation
 
 ## Current MVP interaction
 
 ### macOS
 
-**Option-Space → speak → Option-Space → automatic insertion**
+**Configured Modifier + Space → speak → silence → automatic insertion**
 
-The capsule is intentionally the only visible interaction. There is no confirmation screen and no Insert button.
+The default shortcut is **Option + Space**. You can change the modifier in Settings. The capsule is intentionally the only visible interaction. There is no confirmation screen and no Insert button.
 
 ### iOS
 
-**Open LocalWrite keyboard → tap microphone → speak → tap microphone → automatic insertion**
+**Open LocalWrite keyboard → tap microphone → speak → silence → automatic insertion**
 
 The keyboard inserts through `textDocumentProxy.insertText()` at the current cursor position.
 
@@ -121,6 +131,14 @@ The keyboard inserts through `textDocumentProxy.insertText()` at the current cur
 
 The Foundation Models framework exposes Apple's on-device language model through `SystemLanguageModel`. Model availability must be checked at runtime.
 
+Speech recognition availability and supported on-device languages can vary by device and locale. LocalWrite requests on-device speech recognition where supported.
+
 ## Privacy
 
 LocalWrite is designed around an on-device-first architecture. The refinement layer uses Apple's on-device Foundation Model when it is available. LocalWrite does not require a cloud LLM for its core refinement flow.
+
+Speech recognition is requested only when the voice feature is used. The app declares the required microphone and speech-recognition usage descriptions.
+
+## Status
+
+The core architecture is implemented, but this repository still requires final Xcode target assembly and real-device validation. In particular, macOS Accessibility permissions, microphone/speech authorization, Foundation Model availability, global shortcut behavior, pasteboard insertion, and the iOS keyboard extension should be validated on physical Apple devices.
