@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import LocalWriteCore
 
 @MainActor
@@ -11,6 +12,7 @@ final class LocalWriteController: ObservableObject {
     private let engine: FoundationModelsEngine?
     private let speech = SpeechRecognizer()
     private let capsule = CapsulePanel()
+    private let shortcut = GlobalShortcutMonitor()
 
     init() {
         if #available(macOS 26.0, *) {
@@ -21,7 +23,15 @@ final class LocalWriteController: ObservableObject {
             engine = nil
         }
 
-        capsule.contentView = NSHostingView(rootView: CapsuleView(state: .idle, transcript: ""))
+        capsule.contentView = NSHostingView(
+            rootView: CapsuleView(state: .idle, transcript: "")
+        )
+
+        shortcut.start { [weak self] in
+            Task { @MainActor in
+                self?.toggleListening()
+            }
+        }
     }
 
     func toggleListening() {
@@ -107,6 +117,7 @@ final class LocalWriteController: ObservableObject {
 
     private func refreshCapsule() {
         capsule.update(state: state, transcript: transcript)
+
         if state == .idle {
             capsule.hide()
         } else {
