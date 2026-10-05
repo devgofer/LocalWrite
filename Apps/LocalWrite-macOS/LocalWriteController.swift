@@ -1,12 +1,14 @@
 import AppKit
 import Foundation
 import SwiftUI
+import Speech
 import LocalWriteCore
 
 @MainActor
 final class LocalWriteController: ObservableObject {
     @Published private(set) var state: WriteState = .idle
     @Published private(set) var transcript = ""
+    @Published private(set) var speechAuthorized = false
 
     let modelAvailable: Bool
     private(set) var accessibilityGranted: Bool
@@ -25,16 +27,13 @@ final class LocalWriteController: ObservableObject {
         }
 
         accessibilityGranted = AccessibilityPermission.isGranted
+        speechAuthorized = SFSpeechRecognizer.authorizationStatus() == .authorized
 
         capsule.contentView = NSHostingView(
             rootView: CapsuleView(state: .idle, transcript: "")
         )
 
-        shortcut.start { [weak self] in
-            Task { @MainActor in
-                self?.startListening()
-            }
-        }
+        restartShortcut()
     }
 
     func toggleListening() {
@@ -50,6 +49,7 @@ final class LocalWriteController: ObservableObject {
 
     func refreshPermissions() {
         accessibilityGranted = AccessibilityPermission.isGranted
+        speechAuthorized = SFSpeechRecognizer.authorizationStatus() == .authorized
     }
 
     func requestAccessibility() {
@@ -59,6 +59,21 @@ final class LocalWriteController: ObservableObject {
 
     func openAccessibilitySettings() {
         AccessibilityPermission.openSettings()
+    }
+
+    func requestSpeechAuthorization() {
+        Task {
+            _ = await SpeechRecognizer.requestAuthorization()
+            refreshPermissions()
+        }
+    }
+
+    func restartShortcut() {
+        shortcut.start { [weak self] in
+            Task { @MainActor in
+                self?.startListening()
+            }
+        }
     }
 
     private func startListening() {
@@ -85,6 +100,8 @@ final class LocalWriteController: ObservableObject {
 
         Task {
             let status = await SpeechRecognizer.requestAuthorization()
+            refreshPermissions()
+
             guard status == .authorized else {
                 state = .error("Speech recognition permission is required.")
                 refreshCapsule()
