@@ -12,15 +12,26 @@ let package = Package(
         .library(
             name: "LocalWriteCore",
             targets: ["LocalWriteCore"]
+        ),
+        .executable(
+            name: "LocalWriteMac",
+            targets: ["LocalWriteMac"]
         )
     ],
     targets: [
         .target(
-            name: "LocalWriteCore"
+            name: "LocalWriteCore",
+            path: "Sources/LocalWriteCore"
+        ),
+        .executableTarget(
+            name: "LocalWriteMac",
+            dependencies: ["LocalWriteCore"],
+            path: "Apps/LocalWrite-macOS"
         ),
         .testTarget(
             name: "LocalWriteCoreTests",
-            dependencies: ["LocalWriteCore"]
+            dependencies: ["LocalWriteCore"],
+            path: "Tests/LocalWriteCoreTests"
         )
     ]
 )
