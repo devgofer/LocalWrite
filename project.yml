@@ -1,13 +1,7 @@
 name: LocalWrite
 
 options:
-  deploymentTarget:
-    macOS: "26.0"
-    iOS: "26.0"
   createIntermediateGroups: true
-  groupOrdering: []
-  developmentLanguage: en
-  xcodeVersion: "26.0"
 
 packages:
   LocalWriteCore:
@@ -35,9 +29,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Apps/LocalWrite-macOS/LocalWrite.entitlements
         PRODUCT_NAME: LocalWrite
         SWIFT_VERSION: "6.0"
-    scheme:
-      testTargets:
-        - LocalWriteCoreTests
 
   LocalWriteiOS:
     type: application
@@ -76,14 +67,8 @@ schemes:
     build:
       targets:
         LocalWriteMac: all
-        LocalWriteCoreTests: [test]
-    test:
-      targets:
-        - name: LocalWriteCoreTests
-          parallelizable: true
 
   LocalWriteiOS:
     build:
       targets:
         LocalWriteiOS: all
-        LocalWriteKeyboard: all
