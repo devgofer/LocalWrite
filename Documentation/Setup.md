@@ -9,12 +9,13 @@ Required capabilities:
 - Microphone
 - Speech Recognition usage description
 - Accessibility permission at runtime for automatic insertion
+- Foundation Models availability on a compatible Apple Intelligence device
 
-The first launch should request microphone/speech permissions. To enable automatic insertion, add LocalWrite to:
+The first voice interaction requests speech recognition authorization when needed. To enable automatic insertion and the global keyboard shortcut, add LocalWrite to:
 
 **System Settings → Privacy & Security → Accessibility**
 
-Then focus a text field in another app and press **Option-Space**.
+Then focus a text field in another app and press the configured shortcut. The default is **Option-Space**.
 
 ### Expected flow
 
@@ -23,7 +24,7 @@ Option-Space
 → capsule
 → Listening
 → speak
-→ Option-Space
+→ short silence
 → Refining
 → Writing
 → text appears at cursor
@@ -31,6 +32,16 @@ Option-Space
 ```
 
 There is deliberately no Insert button.
+
+### Settings
+
+Open **LocalWrite → Settings…** from the menu bar menu.
+
+The current settings window lets you:
+
+- change the shortcut modifier between Option, Control, and Command
+- inspect Accessibility, Speech Recognition, and Foundation Model readiness
+- request the required permissions
 
 ## iOS
 
@@ -42,12 +53,12 @@ Enable the keyboard from:
 
 **Settings → General → Keyboard → Keyboards → LocalWrite**
 
-Apple custom keyboards run in a separate process with memory limits, so the extension intentionally keeps its UI and state small. citeturn2search1
+Apple custom keyboards run in a separate process with memory limits, so the extension intentionally keeps its UI and state small.
 
 ## Model availability
 
-The app checks `SystemLanguageModel.default.isAvailable` before using the Foundation Model. Availability depends on Apple Intelligence support, device/region settings, and model readiness. citeturn0search0turn1search4
+The app checks `SystemLanguageModel.default.isAvailable` before using the Foundation Model. Availability depends on Apple Intelligence support, device/region settings, and model readiness.
 
 ## Speech privacy
 
-The speech layer requests on-device recognition with `requiresOnDeviceRecognition = true`. Apple's Speech framework notes that availability of on-device recognition varies by language and service. citeturn1search14
+The speech layer requests on-device recognition with `requiresOnDeviceRecognition = true`. Apple's Speech framework notes that on-device recognition support varies by language and service.
