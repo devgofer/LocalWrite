@@ -13,6 +13,7 @@ public struct FoundationModelsEngine: LocalWriteEngine {
         Remove obvious fillers. Fix obvious grammar and punctuation.
         Split long spoken sentences when useful.
         Keep casual language casual.
+        Preserve mixed-language wording when it is intentional.
         Never add information. Never summarize. Never make the writing
         more formal than the speaker. Return only the refined text.
         """
@@ -20,11 +21,8 @@ public struct FoundationModelsEngine: LocalWriteEngine {
 
     public func refine(_ text: String) async throws -> RefinementResult {
         let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: """
-        Lightly refine this spoken transcript:
-
-        (text)
-        """)
+        let prompt = "Lightly refine this spoken transcript:\n\n" + text
+        let response = try await session.respond(to: prompt)
 
         return RefinementResult(
             original: text,
