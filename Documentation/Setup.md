@@ -47,7 +47,9 @@ The current settings window lets you:
 
 Create an iOS application target and a Custom Keyboard Extension target from the files under `Apps/LocalWrite-iOS`.
 
-Apple requires the keyboard extension to expose a way to switch keyboards. LocalWrite uses the globe button and `advanceToNextInputMode()`.
+The keyboard includes the required globe/input-mode control. Apple currently restricts third-party custom keyboards from microphone access, so the keyboard extension does **not** attempt direct voice capture.
+
+The LocalWrite iOS app is the place to prototype voice capture and Foundation Model refinement. A future architecture may need a user-driven handoff between the containing app and keyboard rather than recording inside the keyboard extension.
 
 Enable the keyboard from:
 
