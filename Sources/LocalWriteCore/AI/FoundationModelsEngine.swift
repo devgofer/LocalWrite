@@ -3,10 +3,10 @@ import FoundationModels
 
 @available(iOS 26.0, macOS 26.0, *)
 public struct FoundationModelsEngine: LocalWriteEngine {
-    private let session: LanguageModelSession
+    private let instructions: String
 
     public init() {
-        self.session = LanguageModelSession(instructions: """
+        self.instructions = """
         You are LocalWrite, a light speech-to-writing editor.
 
         Preserve meaning, tone, personality, and intentional wording.
@@ -15,10 +15,11 @@ public struct FoundationModelsEngine: LocalWriteEngine {
         Keep casual language casual.
         Never add information. Never summarize. Never make the writing
         more formal than the speaker. Return only the refined text.
-        """)
+        """
     }
 
     public func refine(_ text: String) async throws -> RefinementResult {
+        let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: """
         Lightly refine this spoken transcript:
 
