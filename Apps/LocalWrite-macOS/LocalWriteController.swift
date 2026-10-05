@@ -29,23 +29,25 @@ final class LocalWriteController: ObservableObject {
 
         shortcut.start { [weak self] in
             Task { @MainActor in
-                self?.toggleListening()
+                self?.startListening()
             }
         }
     }
 
     func toggleListening() {
-        switch state {
-        case .idle, .error:
-            start()
-        case .listening:
-            finish()
-        default:
-            break
+        if state == .listening {
+            speech.cancel()
+            state = .idle
+            transcript = ""
+            refreshCapsule()
+        } else {
+            startListening()
         }
     }
 
-    private func start() {
+    private func startListening() {
+        guard state == .idle || state.isError else { return }
+
         guard modelAvailable else {
             state = .error("Foundation Model unavailable")
             refreshCapsule()
@@ -65,12 +67,19 @@ final class LocalWriteController: ObservableObject {
             }
 
             do {
-                try speech.start { [weak self] text in
-                    Task { @MainActor in
-                        self?.transcript = text
-                        self?.refreshCapsule()
+                try speech.start(
+                    onPartialResult: { [weak self] text in
+                        Task { @MainActor in
+                            self?.transcript = text
+                            self?.refreshCapsule()
+                        }
+                    },
+                    onFinished: { [weak self] finalText in
+                        Task { @MainActor in
+                            self?.beginRefinement(with: finalText)
+                        }
                     }
-                }
+                )
             } catch {
                 state = .error(error.localizedDescription)
                 refreshCapsule()
@@ -78,16 +87,18 @@ final class LocalWriteController: ObservableObject {
         }
     }
 
-    private func finish() {
-        speech.stop()
+    private func beginRefinement(with finalText: String) {
+        let rawText = (finalText.isEmpty ? transcript : finalText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let rawText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawText.isEmpty else {
             state = .idle
+            transcript = ""
             refreshCapsule()
             return
         }
 
+        transcript = rawText
         state = .refining
         refreshCapsule()
 
@@ -123,5 +134,12 @@ final class LocalWriteController: ObservableObject {
         } else {
             capsule.show()
         }
+    }
+}
+
+private extension WriteState {
+    var isError: Bool {
+        if case .error = self { return true }
+        return false
     }
 }
