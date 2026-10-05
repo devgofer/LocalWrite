@@ -48,7 +48,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     @objc private func toggleRecording() {
-        isRecording ? finishRecording() : startRecording()
+        isRecording ? cancelRecording() : startRecording()
     }
 
     private func startRecording() {
@@ -65,11 +65,21 @@ final class KeyboardViewController: UIInputViewController {
             statusLabel.text = "Listening"
 
             do {
-                try speech.start { [weak self] text in
-                    Task { @MainActor in
-                        self?.transcript = text
+                try speech.start(
+                    onPartialResult: { [weak self] text in
+                        Task { @MainActor in
+                            self?.transcript = text
+                            self?.statusLabel.text = "Listening"
+                        }
+                    },
+                    onFinished: { [weak self] finalText in
+                        Task { @MainActor in
+                            self?.isRecording = false
+                            self?.recordButton.tintColor = .tintColor
+                            self?.refineAndInsert(finalText)
+                        }
                     }
-                }
+                )
             } catch {
                 isRecording = false
                 recordButton.tintColor = .tintColor
@@ -78,12 +88,18 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    private func finishRecording() {
+    private func cancelRecording() {
+        speech.cancel()
         isRecording = false
-        speech.stop()
         recordButton.tintColor = .tintColor
+        transcript = ""
+        statusLabel.text = "LocalWrite"
+    }
 
-        let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func refineAndInsert(_ finalText: String) {
+        let text = (finalText.isEmpty ? transcript : finalText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
         guard !text.isEmpty else {
             statusLabel.text = "LocalWrite"
             return
