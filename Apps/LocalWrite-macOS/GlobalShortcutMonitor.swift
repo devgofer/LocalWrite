@@ -7,8 +7,9 @@ final class GlobalShortcutMonitor {
         stop()
 
         monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-            guard event.modifierFlags.contains(.option),
-                  event.keyCode == 49 else {
+            guard event.keyCode == 49,
+                  !event.isARepeat,
+                  Self.matchesConfiguredModifier(event.modifierFlags) else {
                 return
             }
 
@@ -20,6 +21,19 @@ final class GlobalShortcutMonitor {
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
+        }
+    }
+
+    private static func matchesConfiguredModifier(_ flags: NSEvent.ModifierFlags) -> Bool {
+        switch LocalWriteSettings.shortcutModifier {
+        case "control":
+            return flags.contains(.control)
+        case "command":
+            return flags.contains(.command)
+        case "option":
+            return flags.contains(.option)
+        default:
+            return flags.contains(.option)
         }
     }
 
