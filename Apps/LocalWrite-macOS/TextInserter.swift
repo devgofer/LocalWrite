@@ -1,9 +1,27 @@
 import AppKit
 import CoreGraphics
 
+enum AccessibilityPermission {
+    static var isGranted: Bool {
+        AXIsProcessTrusted()
+    }
+
+    static func requestPrompt() {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+    }
+
+    static func openSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        if let url {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
 enum TextInserter {
     static func insert(_ text: String) throws {
-        guard AXIsProcessTrusted() else {
+        guard AccessibilityPermission.isGranted else {
             throw TextInsertionError.accessibilityPermissionRequired
         }
 
@@ -29,7 +47,7 @@ enum TextInserter {
         keyDown?.post(tap: .cghidEventTap)
         keyUp?.post(tap: .cghidEventTap)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             pasteboard.clearContents()
             for item in previousItems {
                 let pasteboardItem = NSPasteboardItem()
