@@ -7,13 +7,15 @@ LocalWrite is not a transcription window.
 ```
 Idle
   ↓
-Option-Space
+Configured Modifier + Space
   ↓
 Capsule appears
   ↓
 Listening
   ↓
 User stops speaking
+  ↓
+Short silence timeout
   ↓
 Refining
   ↓
@@ -46,4 +48,6 @@ If insertion fails, the capsule shows the error instead of silently dropping the
 
 ## Shortcut
 
-The first prototype uses Option-Space. It can become configurable after the core interaction is stable.
+The default shortcut is **Option-Space**. The modifier can be changed in LocalWrite Settings to Option, Control, or Command.
+
+The key remains Space in this MVP.
