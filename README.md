@@ -94,10 +94,24 @@ LocalWrite/
 ## Milestones
 
 - [x] Milestone 1 — shared core + Foundation Models proof of concept
-- [ ] Milestone 2 — macOS capsule + global shortcut
-- [ ] Milestone 3 — speech recognition → refinement → automatic insertion
-- [ ] Milestone 4 — iOS custom keyboard
+- [x] Milestone 2 — macOS capsule + global shortcut
+- [x] Milestone 3 — speech recognition → refinement → automatic insertion
+- [x] Milestone 4 — iOS custom keyboard foundation
 - [ ] Milestone 5 — polish, settings, evaluation suite
+
+## Current MVP interaction
+
+### macOS
+
+**Option-Space → speak → Option-Space → automatic insertion**
+
+The capsule is intentionally the only visible interaction. There is no confirmation screen and no Insert button.
+
+### iOS
+
+**Open LocalWrite keyboard → tap microphone → speak → tap microphone → automatic insertion**
+
+The keyboard inserts through `textDocumentProxy.insertText()` at the current cursor position.
 
 ## Requirements
 
