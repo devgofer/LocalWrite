@@ -9,6 +9,7 @@ final class LocalWriteController: ObservableObject {
     @Published private(set) var transcript = ""
 
     let modelAvailable: Bool
+    private(set) var accessibilityGranted: Bool
     private let engine: FoundationModelsEngine?
     private let speech = SpeechRecognizer()
     private let capsule = CapsulePanel()
@@ -22,6 +23,8 @@ final class LocalWriteController: ObservableObject {
             modelAvailable = false
             engine = nil
         }
+
+        accessibilityGranted = AccessibilityPermission.isGranted
 
         capsule.contentView = NSHostingView(
             rootView: CapsuleView(state: .idle, transcript: "")
@@ -45,12 +48,34 @@ final class LocalWriteController: ObservableObject {
         }
     }
 
+    func refreshPermissions() {
+        accessibilityGranted = AccessibilityPermission.isGranted
+    }
+
+    func requestAccessibility() {
+        AccessibilityPermission.requestPrompt()
+        refreshPermissions()
+    }
+
+    func openAccessibilitySettings() {
+        AccessibilityPermission.openSettings()
+    }
+
     private func startListening() {
         guard state == .idle || state.isError else { return }
+
+        refreshPermissions()
 
         guard modelAvailable else {
             state = .error("Foundation Model unavailable")
             refreshCapsule()
+            return
+        }
+
+        guard accessibilityGranted else {
+            state = .error("Accessibility permission is required.")
+            refreshCapsule()
+            AccessibilityPermission.requestPrompt()
             return
         }
 
