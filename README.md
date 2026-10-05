@@ -27,11 +27,16 @@ The visual direction is inspired by the simplicity of Typeless: one compact caps
 
 ### iOS
 
-LocalWrite includes a custom keyboard foundation, but the voice path is intentionally **not** implemented inside the keyboard extension.
+The iOS experience is split into two pieces:
 
-Apple's current custom-keyboard sandbox does not provide microphone access to third-party keyboards, so a keyboard extension cannot directly record the user's voice. The keyboard therefore remains a lightweight extension shell with the required keyboard-switching control.
+1. Open the LocalWrite app and tap **Speak**.
+2. Capture voice in the containing app.
+3. Transcribe with on-device speech recognition.
+4. Refine the transcript with Apple Foundation Models.
+5. Show the transcript and refined result in the app.
+6. Use the LocalWrite keyboard as the lightweight input-mode shell.
 
-The containing LocalWrite app is the place for iOS voice-capture experiments. This keeps the product honest about Apple's platform constraints instead of pretending the keyboard can do something the system does not allow.
+The keyboard extension does **not** attempt to record microphone input. This is intentional: third-party custom keyboards do not have direct microphone access, so voice capture belongs in the containing app.
 
 ## Core principle
 
