@@ -5,8 +5,8 @@ import LocalWriteKeyboardBridge
 
 /// Keeps LocalWrite ready in the background so the keyboard can dictate in place.
 /// iOS keyboards cannot record, so the keyboard opens this app once per session.
-/// A floating picture-in-picture window keeps the app running; the microphone is
-/// on only between the keyboard's start and finish, as in Typeless.
+/// Silent playback keeps the app running; the microphone is on only between the
+/// keyboard's start and finish, as in Typeless.
 @MainActor
 final class VoiceSessionHost: ObservableObject {
     @Published private(set) var warm = false
@@ -14,7 +14,7 @@ final class VoiceSessionHost: ObservableObject {
     @Published private(set) var message = "在任何輸入框切換到 LocalWrite 鍵盤，點麥克風就能開始。"
     @Published private(set) var expiresAt: Date?
 
-    let pip = PictureInPictureKeeper()
+    private let keepAlive = BackgroundKeepAlive()
     private let audio = AVAudioEngine()
     private let feed = SpeechAudioFeed()
     private let speech = SpeechRecognizer()
@@ -34,7 +34,15 @@ final class VoiceSessionHost: ObservableObject {
               let ticket = exchange.launchRequest(), ticket.matches(url) else { return }
         try? exchange.clearLaunchRequest()
         self.exchange = exchange
-        Task { await startSession() }
+        exchange.diagnose("app opened, host=\(ticket.hostBundleID ?? "unknown")")
+        Task {
+            await startSession()
+            // Like Typeless, hop straight back to the field the user was typing in.
+            if warm, let host = ticket.hostBundleID, host != Bundle.main.bundleIdentifier {
+                let opened = HostReturn.open(bundleID: host)
+                exchange.diagnose("app return to \(host): \(opened)")
+            }
+        }
     }
 
     func startSession() async {
@@ -58,21 +66,15 @@ final class VoiceSessionHost: ObservableObject {
             // here, in the foreground, so recording can later start from the background.
             try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
             try session.setActive(true)
+            try keepAlive.start()
         } catch {
             teardownAudio()
             message = "無法開啟麥克風：\(error.localizedDescription)"; return
         }
-        pip.onStop = { [weak self] in
-            guard let self, self.warm, UIApplication.shared.applicationState != .active else { return }
-            self.endSession(message: "浮動視窗已關閉。下次點鍵盤麥克風會再開啟一次。")
-        }
-        await pip.start()
         let expires = Date.now.addingTimeInterval(TimeInterval(settings.sessionMinutes * 60))
         state = VoiceState(sessionID: UUID(), phase: .idle, expiresAt: expires)
         warm = true; expiresAt = expires
-        message = PictureInPictureKeeper.isSupported
-            ? "已啟用。滑回原本的 App，點鍵盤麥克風就能說話。麥克風只在你說話時開啟。"
-            : "這台裝置不支援浮動視窗，LocalWrite 可能無法在背景待命。"
+        message = "已啟用。回到原本的 App，點鍵盤麥克風就能說話。麥克風只在你說話時開啟。"
         commandSignal = DarwinSignal(observing: DarwinSignal.command) { [weak self] in
             Task { @MainActor in self?.readCommand() }
         }
@@ -93,7 +95,6 @@ final class VoiceSessionHost: ObservableObject {
         commandSignal = nil
         speech.cancel()
         teardownAudio()
-        pip.onStop = nil; pip.stop()
         if state != nil { state?.phase = .ended; state?.requestID = nil; publish() }
         state = nil; warm = false; expiresAt = nil
         self.message = message
@@ -137,7 +138,6 @@ final class VoiceSessionHost: ObservableObject {
             endSession(message: "需要重新開啟麥克風：\(error.localizedDescription)")
             return
         }
-        pip.show("聆聽中", symbol: "mic.fill")
         publish()
         do {
             try speech.start(externalAudioFeed: feed,
@@ -206,11 +206,11 @@ final class VoiceSessionHost: ObservableObject {
     private func stopCapture() {
         audio.stop()
         if tapInstalled { audio.inputNode.removeTap(onBus: 0); tapInstalled = false }
-        if warm { pip.show("LocalWrite 待命中", symbol: "mic") }
     }
 
     private func teardownAudio() {
         stopCapture()
+        keepAlive.stop()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

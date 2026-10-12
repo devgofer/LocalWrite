@@ -85,7 +85,11 @@ public struct KeyboardCommand: Codable, Equatable, Sendable {
 public struct KeyboardLaunchRequest: Codable, Equatable, Sendable {
     public let id: UUID
     public let createdAt: Date
-    public init(id: UUID = UUID(), createdAt: Date = .now) { self.id = id; self.createdAt = createdAt }
+    /// The app the keyboard was typing in, when iOS reveals it, so LocalWrite can switch back.
+    public let hostBundleID: String?
+    public init(id: UUID = UUID(), createdAt: Date = .now, hostBundleID: String? = nil) {
+        self.id = id; self.createdAt = createdAt; self.hostBundleID = hostBundleID
+    }
     public var url: URL { URL(string: "localwrite://session/\(id.uuidString)")! }
     public func matches(_ url: URL, at now: Date = .now) -> Bool {
         url.scheme == "localwrite" && url.host == "session" &&
@@ -114,6 +118,20 @@ public struct KeyboardExchange: Sendable {
     public func write(_ value: KeyboardLaunchRequest) throws { try write(value, name: "voice-launch.json") }
     public func launchRequest() -> KeyboardLaunchRequest? { read("voice-launch.json") }
     public func clearLaunchRequest() throws { try remove("voice-launch.json") }
+
+    /// Appends a line to a small log both processes share, for on-device debugging.
+    public func diagnose(_ line: String) {
+        let url = directory.appendingPathComponent("diagnostics.log")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let entry = Data("\(ISO8601DateFormatter().string(from: .now)) \(line)\n".utf8)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            if (try? handle.seekToEnd()) ?? 0 > 64_000 { try? handle.truncate(atOffset: 0) }
+            try? handle.write(contentsOf: entry)
+        } else {
+            try? entry.write(to: url)
+        }
+    }
 
     private func write<T: Encodable>(_ value: T, name: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -32,6 +32,6 @@ The Foundation Models prompt is intentionally short because Apple's current guid
 
 ## Result validation (2026-10-06)
 
-The engine rejects empty model output. It accepts punctuation and spacing changes, and a limited set of leading hesitation removals. If the model adds, drops, translates, or replaces wording, the engine returns the original transcript. This conservative policy prioritizes retaining meaning and mixed-language wording; grammar rewrites can therefore fall back to the original. Decimal punctuation, symbols, and English word boundaries are preserved by the validation.
+The engine rejects empty model output. Updated 2026-10-13 to match Typeless: deleting fillers, stutters, repeats and self-corrections, adding punctuation, and formatting spoken lists are accepted. The output falls back to the original transcript when it introduces more than 10% new words, changes a number, drops below 30% of the original length, drops an uncertainty word (可能、應該、maybe…), or changes anything in utterances of three words or fewer. Decimal punctuation, symbols, and English word boundaries are preserved by the validation.
 
-Run `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh Scripts/evaluate-refinement.sh` for three live-model smoke cases. These checks complement deterministic unit tests; they do not establish semantic correctness for all possible speech.
+Run `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh Scripts/evaluate-refinement.sh` for eight live-model cases (all passing on 2026-10-13). These checks complement deterministic unit tests; they do not establish semantic correctness for all possible speech.

@@ -154,7 +154,8 @@ final class KeyboardModel: ObservableObject {
             notice = "請到 設定 → 一般 → 鍵盤 → LocalWrite 開啟「允許完整取用」。"; return nil
         }
         self.exchange = exchange
-        let ticket = KeyboardLaunchRequest()
+        let ticket = KeyboardLaunchRequest(hostBundleID: controller.map(HostApp.bundleID(for:)) ?? nil)
+        exchange.diagnose("keyboard host=\(ticket.hostBundleID ?? "unknown") \(HostApp.lastProbe)")
         do { try exchange.write(ticket) } catch { notice = "無法開啟 LocalWrite，請再試一次。"; return nil }
         notice = "開啟麥克風後，滑回這裡就能說話。"
         return ticket.url

@@ -23,11 +23,6 @@ struct HomeView: View {
                             .frame(width: 84, height: 84)
                             .background(Circle().fill(Color(.secondarySystemFill)))
                         Text(host.message).multilineTextAlignment(.center)
-                        // Source for the floating window; AVKit needs it on screen.
-                        PictureInPictureSourceView(layer: host.pip.layer)
-                            .frame(width: 160, height: 90)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .accessibilityHidden(true)
                         if host.warm, let expiresAt = host.expiresAt {
                             Text("剩餘 \(Text(timerInterval: Date.now...expiresAt, countsDown: true))")
                                 .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
@@ -50,7 +45,7 @@ struct HomeView: View {
                 }
                 Section("第一次使用") {
                     Text("設定 → 一般 → 鍵盤 → 鍵盤 → 新增鍵盤 → LocalWrite，然後開啟「允許完整取用」。")
-                    Text("開啟後 LocalWrite 會以浮動視窗待命，可拖到螢幕邊緣收起。麥克風只在你說話時開啟。")
+                    Text("開啟後 LocalWrite 會在背景待命，麥克風只在你說話時開啟。")
                     Text("在鍵盤點一下開始說話，再點一下就會整理或翻譯後填入。")
                 }
                 .font(.footnote).foregroundStyle(.secondary)

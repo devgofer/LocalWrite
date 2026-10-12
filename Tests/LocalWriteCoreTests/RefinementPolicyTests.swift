@@ -26,4 +26,21 @@ final class RefinementPolicyTests: XCTestCase {
         XCTAssertEqual(RefinementPolicy.preserveWording(original: "um I think so", candidate: "I think so."), "I think so.")
         XCTAssertEqual(RefinementPolicy.preserveWording(original: "umbrella", candidate: "brella"), "umbrella")
     }
+
+    func testAcceptsTypelessStyleCleanup() {
+        let cases = [
+            ("我覺得那個那個就是我們應該先做這個", "我覺得我們應該先做這個。"),
+            ("我們約明天不對後天早上見好了", "我們約後天早上見好了。"),
+            ("我要買三樣東西第一個是牛奶然後第二個是雞蛋第三個是麵包", "我要買三樣東西：\n1. 牛奶\n2. 雞蛋\n3. 麵包"),
+            ("um so I think we should uh ship it on Friday I mean Thursday", "So I think we should ship it on Thursday.")
+        ]
+        for (raw, cleaned) in cases {
+            XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: cleaned), cleaned)
+        }
+    }
+    func testRejectsSummaryAndDroppedUncertainty() {
+        let raw = "我覺得我們這週可能要先把登入頁面做完然後下週再處理付款流程"
+        XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "先做登入。"), raw)
+        XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "我覺得我們這週要先把登入頁面做完，下週再處理付款流程。"), raw)
+    }
 }

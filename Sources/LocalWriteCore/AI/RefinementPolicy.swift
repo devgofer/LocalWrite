@@ -1,60 +1,62 @@
 import Foundation
 
-/// Accept punctuation/spacing edits and removal of a leading hesitation only.
-/// If a model translates, adds, drops or rewrites words, keep the original text.
-/// This deliberately favors preserving intent over aggressive grammar correction.
+/// Guards the model's cleanup. Deleting words (fillers, repeats, self-corrections)
+/// and reformatting are allowed; adding words, changing numbers, translating,
+/// summarizing or dropping uncertainty falls back to the original transcript.
 enum RefinementPolicy {
     static func preserveWording(original: String, candidate: String) -> String {
         let output = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-        let expected = characters(original)
-        let actual = characters(output)
-        if expected == actual { return output }
-        if let withoutHesitation = removingLeadingHesitation(original),
-           characters(withoutHesitation) == actual { return output }
-        return original.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = tokens(fallback)
+        let result = tokens(stripListMarkers(output))
+        if result == source { return output }
+        // Very short utterances such as 嗯是 or 對 keep every word.
+        guard source.count > 3, !result.isEmpty else { return fallback }
+        let known = Set(source)
+        let novel = result.filter { !known.contains($0) }.count
+        guard novel <= result.count / 10 else { return fallback }
+        // Deletions are expected, but not a summary.
+        guard result.count * 10 >= source.count * 3, result.count <= source.count + source.count / 10 + 1 else {
+            return fallback
+        }
+        for word in hedges where fallback.lowercased().contains(word) && !output.lowercased().contains(word) {
+            return fallback
+        }
+        return output
     }
 
-    private static func characters(_ text: String) -> String {
-        let punctuation = CharacterSet(charactersIn: "，。！？、；：,.!?;:\"「」『』“”‘’")
+    /// Uncertainty the speaker expressed must survive cleanup.
+    private static let hedges = ["可能", "應該", "也許", "大概", "或許", "好像", "maybe", "probably", "might"]
+
+    /// CJK and other non-ASCII characters are one token each; ASCII words (with
+    /// decimal points inside numbers) are one lowercased token. Punctuation is ignored.
+    static func tokens(_ text: String) -> [String] {
+        let punctuation = CharacterSet(charactersIn: "，。！？、；：,.!?;:\"「」『』“”‘’（）()…—-·•*")
+        var result: [String] = []
+        var word = ""
         let scalars = Array(text.unicodeScalars)
-        let cleaned = scalars.enumerated().compactMap { index, scalar -> Unicode.Scalar? in
-            let insideNumber = index > 0 && index + 1 < scalars.count
+        func flush() { if !word.isEmpty { result.append(word.lowercased()); word = "" } }
+        for (index, scalar) in scalars.enumerated() {
+            let insideNumber = scalar == "." && index > 0 && index + 1 < scalars.count
                 && CharacterSet.decimalDigits.contains(scalars[index - 1])
                 && CharacterSet.decimalDigits.contains(scalars[index + 1])
-            return punctuation.contains(scalar) && !insideNumber ? nil : scalar
-        }
-        let pieces = String(String.UnicodeScalarView(cleaned)).split(whereSeparator: { $0.isWhitespace })
-        var result = ""
-        for piece in pieces {
-            if let last = result.unicodeScalars.last, let first = piece.unicodeScalars.first,
-               last.isASCII, first.isASCII,
-               CharacterSet.alphanumerics.contains(last), CharacterSet.alphanumerics.contains(first) {
-                result += " "
+            if scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar) || scalar == "'" || insideNumber) {
+                word.unicodeScalars.append(scalar)
+            } else if CharacterSet.whitespacesAndNewlines.contains(scalar) || punctuation.contains(scalar) {
+                flush()
+            } else {
+                flush()
+                result.append(String(scalar))
             }
-            result += piece
         }
+        flush()
         return result
     }
 
-    private static func removingLeadingHesitation(_ text: String) -> String? {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A standalone affirmation such as 嗯 or 嗯，是 stays intact.
-        let affirmations = ["嗯是", "嗯對", "嗯好", "呃是", "呃對", "呃好", "嗯是的", "嗯對的"]
-        if affirmations.contains(where: { text.hasPrefix($0) }) {
-            return nil
-        }
-        for prefix in ["嗯我", "呃我", "嗯這", "呃這", "嗯", "呃", "啊"] where text.hasPrefix(prefix) {
-            if prefix.count == 1 {
-                if text.count > 2 {
-                    return String(text.dropFirst())
-                }
-            } else {
-                return String(text.dropFirst())
-            }
-        }
-        for prefix in ["um ", "uh ", "Um ", "Uh ", "um, ", "uh, ", "Um, ", "Uh, "] where text.hasPrefix(prefix) {
-            return String(text.dropFirst(prefix.count))
-        }
-        return nil
+    /// Numbered or bulleted list markers the model adds when formatting a spoken list.
+    private static func stripListMarkers(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            line.replacingOccurrences(of: #"^\s*(\d{1,2}[.、)）]|[-•*])\s*"#, with: "", options: .regularExpression)
+        }.joined(separator: "\n")
     }
 }
