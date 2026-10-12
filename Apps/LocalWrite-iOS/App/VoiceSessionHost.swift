@@ -3,9 +3,10 @@ import SwiftUI
 import LocalWriteCore
 import LocalWriteKeyboardBridge
 
-/// Keeps the microphone warm in the background so the keyboard can dictate in place.
-/// iOS keyboards cannot record, so the keyboard opens this app once per session;
-/// after that it sends start/finish commands and inserts the result itself.
+/// Keeps LocalWrite ready in the background so the keyboard can dictate in place.
+/// iOS keyboards cannot record, so the keyboard opens this app once per session.
+/// A floating picture-in-picture window keeps the app running; the microphone is
+/// on only between the keyboard's start and finish, as in Typeless.
 @MainActor
 final class VoiceSessionHost: ObservableObject {
     @Published private(set) var warm = false
@@ -13,6 +14,7 @@ final class VoiceSessionHost: ObservableObject {
     @Published private(set) var message = "在任何輸入框切換到 LocalWrite 鍵盤，點麥克風就能開始。"
     @Published private(set) var expiresAt: Date?
 
+    let pip = PictureInPictureKeeper()
     private let audio = AVAudioEngine()
     private let feed = SpeechAudioFeed()
     private let speech = SpeechRecognizer()
@@ -52,25 +54,25 @@ final class VoiceSessionHost: ObservableObject {
         }
         do {
             let session = AVAudioSession.sharedInstance()
-            // Mixing keeps the user's music or video playing while the mic stays warm.
+            // Mixing keeps the user's music or video playing. The session is activated
+            // here, in the foreground, so recording can later start from the background.
             try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
             try session.setActive(true)
-            let node = audio.inputNode
-            let format = node.outputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else { throw SpeechRecognizerError.audioInputUnavailable }
-            // Buffers are discarded unless a dictation is in progress.
-            node.installTap(onBus: 0, bufferSize: 1024, format: format, block: feed.makeTapHandler())
-            tapInstalled = true
-            audio.prepare()
-            try audio.start()
         } catch {
             teardownAudio()
             message = "無法開啟麥克風：\(error.localizedDescription)"; return
         }
+        pip.onStop = { [weak self] in
+            guard let self, self.warm, UIApplication.shared.applicationState != .active else { return }
+            self.endSession(message: "浮動視窗已關閉。下次點鍵盤麥克風會再開啟一次。")
+        }
+        await pip.start()
         let expires = Date.now.addingTimeInterval(TimeInterval(settings.sessionMinutes * 60))
         state = VoiceState(sessionID: UUID(), phase: .idle, expiresAt: expires)
         warm = true; expiresAt = expires
-        message = "已啟用。滑回原本的 App，點鍵盤麥克風就能說話。"
+        message = PictureInPictureKeeper.isSupported
+            ? "已啟用。滑回原本的 App，點鍵盤麥克風就能說話。麥克風只在你說話時開啟。"
+            : "這台裝置不支援浮動視窗，LocalWrite 可能無法在背景待命。"
         commandSignal = DarwinSignal(observing: DarwinSignal.command) { [weak self] in
             Task { @MainActor in self?.readCommand() }
         }
@@ -91,6 +93,7 @@ final class VoiceSessionHost: ObservableObject {
         commandSignal = nil
         speech.cancel()
         teardownAudio()
+        pip.onStop = nil; pip.stop()
         if state != nil { state?.phase = .ended; state?.requestID = nil; publish() }
         state = nil; warm = false; expiresAt = nil
         self.message = message
@@ -113,10 +116,11 @@ final class VoiceSessionHost: ObservableObject {
             guard state?.requestID == command.requestID, state?.phase == .recording else { return }
             state?.phase = .processing; publish()
             speech.finish()
+            stopCapture()
         case .cancel:
             guard state?.requestID == command.requestID else { return }
             processing?.cancel(); processing = nil
-            speech.cancel()
+            speech.cancel(); stopCapture()
             state?.phase = .idle; state?.requestID = nil; state?.text = ""; publish()
         }
     }
@@ -127,6 +131,13 @@ final class VoiceSessionHost: ObservableObject {
         let id = command.requestID
         state?.requestID = id; state?.phase = .recording
         state?.text = ""; state?.message = ""; state?.usedRawFallback = false
+        do { try startCapture() } catch {
+            // iOS refused to start recording in the background; the keyboard falls back to opening the app.
+            fail("LocalWrite 無法在背景開啟麥克風，請再點一次麥克風。")
+            endSession(message: "需要重新開啟麥克風：\(error.localizedDescription)")
+            return
+        }
+        pip.show("聆聽中", symbol: "mic.fill")
         publish()
         do {
             try speech.start(externalAudioFeed: feed,
@@ -135,6 +146,7 @@ final class VoiceSessionHost: ObservableObject {
                     self.state?.text = text; self.publish()
                 }, onFinished: { [weak self] text in
                     guard let self, self.state?.requestID == id else { return }
+                    self.stopCapture()
                     self.process(text, for: command)
                 }, onError: { [weak self] message in
                     guard let self, self.state?.requestID == id else { return }
@@ -168,6 +180,7 @@ final class VoiceSessionHost: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        stopCapture()
         state?.phase = .failed; state?.message = message; publish()
     }
 
@@ -178,9 +191,26 @@ final class VoiceSessionHost: ObservableObject {
         DarwinSignal.post(DarwinSignal.state)
     }
 
-    private func teardownAudio() {
+    private func startCapture() throws {
+        guard !tapInstalled else { return }
+        let node = audio.inputNode
+        let format = node.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { throw SpeechRecognizerError.audioInputUnavailable }
+        node.installTap(onBus: 0, bufferSize: 1024, format: format, block: feed.makeTapHandler())
+        tapInstalled = true
+        audio.prepare()
+        do { try audio.start() } catch { stopCapture(); throw error }
+    }
+
+    /// Turns the microphone off; the audio session stays active for the next dictation.
+    private func stopCapture() {
         audio.stop()
         if tapInstalled { audio.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        if warm { pip.show("LocalWrite 待命中", symbol: "mic") }
+    }
+
+    private func teardownAudio() {
+        stopCapture()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

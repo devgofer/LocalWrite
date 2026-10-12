@@ -23,13 +23,18 @@ struct HomeView: View {
                             .frame(width: 84, height: 84)
                             .background(Circle().fill(Color(.secondarySystemFill)))
                         Text(host.message).multilineTextAlignment(.center)
+                        // Source for the floating window; AVKit needs it on screen.
+                        PictureInPictureSourceView(layer: host.pip.layer)
+                            .frame(width: 160, height: 90)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .accessibilityHidden(true)
                         if host.warm, let expiresAt = host.expiresAt {
                             Text("剩餘 \(Text(timerInterval: Date.now...expiresAt, countsDown: true))")
                                 .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
-                            Button("關閉麥克風", role: .destructive) { host.endSession() }
+                            Button("停止待命", role: .destructive) { host.endSession() }
                                 .buttonStyle(.bordered)
                         } else {
-                            Button("開啟麥克風") { Task { await host.startSession() } }
+                            Button("開始待命") { Task { await host.startSession() } }
                                 .buttonStyle(.borderedProminent).disabled(host.starting)
                         }
                     }
@@ -39,13 +44,14 @@ struct HomeView: View {
                     Picker("翻譯成", selection: $language) {
                         ForEach(TranslationLanguage.all) { Text($0.displayName).tag($0.code) }
                     }
-                    Picker("麥克風保持開啟", selection: $minutes) {
+                    Picker("待命時間", selection: $minutes) {
                         ForEach(SharedSettings.sessionMinuteChoices, id: \.self) { Text("\($0) 分鐘").tag($0) }
                     }
                 }
                 Section("第一次使用") {
                     Text("設定 → 一般 → 鍵盤 → 鍵盤 → 新增鍵盤 → LocalWrite，然後開啟「允許完整取用」。")
-                    Text("麥克風開啟期間，在鍵盤點一下開始說話，再點一下就會整理或翻譯後填入。")
+                    Text("開啟後 LocalWrite 會以浮動視窗待命，可拖到螢幕邊緣收起。麥克風只在你說話時開啟。")
+                    Text("在鍵盤點一下開始說話，再點一下就會整理或翻譯後填入。")
                 }
                 .font(.footnote).foregroundStyle(.secondary)
             }
