@@ -8,6 +8,7 @@ public final class SpeechRecognizer {
     private let audioEngine = AVAudioEngine()
     private var audioRequest: AudioRequest?
     private var externalFeed: SpeechAudioFeed?
+    private let router = AudioRouter()
     private var task: SFSpeechRecognitionTask?
     private var timer: Task<Void, Never>?
     private var session = SpeechSession()
@@ -68,27 +69,19 @@ public final class SpeechRecognizer {
         partial = onPartialResult
         completion = onFinished
         failure = onError
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
-        request.addsPunctuation = true
-        let input = AudioRequest(request)
-        audioRequest = input
 
         do {
             if let externalAudioFeed {
                 externalFeed = externalAudioFeed
-                externalAudioFeed.set(input)
             } else {
+            let router = self.router
             let node = audioEngine.inputNode
             let format = node.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
                 throw SpeechRecognizerError.audioInputUnavailable
             }
             node.installTap(onBus: 0, bufferSize: 1024, format: format) { @Sendable [weak self] buffer, _ in
-                input.append(buffer)
+                router.append(buffer)
                 // Read the callback-owned buffer here; only scalars cross actors.
                 let decibels = Self.decibels(buffer)
                 let speechLike = decibels > -42
@@ -101,17 +94,7 @@ public final class SpeechRecognizer {
             }
             tapInstalled = true
             }
-            task = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
-                let text = result?.bestTranscription.formattedString
-                let final = result?.isFinal ?? false
-                let message = error?.localizedDescription
-                Task { @MainActor [weak self] in
-                    guard let self, self.session.id == id else { return }
-                    let action = self.session.receive(id: id, text: text, final: final, error: message)
-                    if let text, !text.isEmpty { self.partial?(text) }
-                    self.handle(action)
-                }
-            }
+            startRecognition(id: id)
             if externalAudioFeed == nil {
                 audioEngine.prepare()
                 try audioEngine.start()
@@ -127,6 +110,29 @@ public final class SpeechRecognizer {
         } catch {
             cancel()
             throw error
+        }
+    }
+
+    /// One recognition request; long dictations chain several, one per recognizer segment.
+    private func startRecognition(id: UUID) {
+        guard let recognizer else { return }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = true
+        request.addsPunctuation = true
+        let input = AudioRequest(request)
+        audioRequest = input
+        if let externalFeed { externalFeed.set(input) } else { router.set(input) }
+        task = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
+            let text = result?.bestTranscription.formattedString
+            let final = result?.isFinal ?? false
+            let message = error?.localizedDescription
+            Task { @MainActor [weak self] in
+                guard let self, self.session.id == id, self.audioRequest === input else { return }
+                let action = self.session.receive(id: id, text: text, final: final, error: message)
+                if let text, !text.isEmpty { self.partial?(self.session.transcript) }
+                self.handle(action)
+            }
         }
     }
 
@@ -147,6 +153,11 @@ public final class SpeechRecognizer {
             stopAudioCapture()
             audioRequest?.end()
             // Keep the recognition task alive until final or the bounded timeout.
+        case .restart:
+            guard let id = session.id else { return }
+            audioRequest?.end()
+            task?.cancel()
+            startRecognition(id: id)
         case .finished(let text):
             let callback = completion
             cleanup()
@@ -161,6 +172,7 @@ public final class SpeechRecognizer {
     private func cleanup() {
         externalFeed?.set(nil)
         externalFeed = nil
+        router.set(nil)
         timer?.cancel()
         timer = nil
         stopAudioCapture()
@@ -197,6 +209,17 @@ public final class SpeechRecognizer {
 
 /// The audio callback and main actor share only this locked request adapter.
 /// All append/end accesses are serialized; audio buffers never leave the tap.
+/// Lets the microphone tap follow the current request across recognizer segments.
+fileprivate final class AudioRouter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: AudioRequest?
+    func set(_ request: AudioRequest?) { lock.lock(); self.request = request; lock.unlock() }
+    func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock(); let request = self.request; lock.unlock()
+        request?.append(buffer)
+    }
+}
+
 fileprivate final class AudioRequest: @unchecked Sendable {
     private let lock = NSLock()
     private let request: SFSpeechAudioBufferRecognitionRequest

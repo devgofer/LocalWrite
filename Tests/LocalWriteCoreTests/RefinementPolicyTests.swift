@@ -55,4 +55,12 @@ final class RefinementPolicyTests: XCTestCase {
         XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "我們明天下午3點在會議室開會。"), "我們明天下午3點在會議室開會。")
         XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "我們明天下午4點在會議室開會。"), raw)
     }
+
+    func testSelfCorrectionOfDaysTimesAndCounts() {
+        XCTAssertEqual(SelfCorrection.apply("你明天有空嗎？阿不對，後天。"), "你後天有空嗎？")
+        XCTAssertEqual(SelfCorrection.apply("你明天有空嗎？啊不對，是後天有嗎？"), "你後天有空嗎？")
+        XCTAssertEqual(SelfCorrection.apply("我們約明天三點阿不對，是下午4:30 OK嗎？"), "我們約明天下午4:30 OK嗎？")
+        XCTAssertEqual(SelfCorrection.apply("幫我訂三張不是四張票"), "幫我訂四張票")
+        XCTAssertEqual(SelfCorrection.apply("我不是故意的"), "我不是故意的")
+    }
 }

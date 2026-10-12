@@ -159,6 +159,7 @@ final class KeyboardModel: ObservableObject {
         self.exchange = exchange
         let ticket = KeyboardLaunchRequest(hostBundleID: controller.map(HostApp.bundleID(for:)) ?? nil)
         exchange.diagnose("keyboard host=\(ticket.hostBundleID ?? "unknown") \(HostApp.lastProbe)")
+        if ticket.hostBundleID == nil, let controller { exchange.diagnose("keyboard survey " + HostApp.survey(controller)) }
         do { try exchange.write(ticket) } catch { notice = "無法開啟 LocalWrite，請再試一次。"; return nil }
         notice = "開啟麥克風後，滑回這裡就能說話。"
         return ticket.url

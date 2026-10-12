@@ -30,6 +30,10 @@ struct EvaluateRefinement {
             ("我們約明天不對後天早上見好了", ["後天", "早上"], ["明天", "不對"]),
             ("幫我訂三張不是四張票", ["四張"], ["三張", "不是"]),
             ("幫我訂三張，不是，四張票", ["四張"], ["三張", "不是"]),
+            ("你明天有空嗎？阿不對，後天。", ["你後天有空嗎"], ["明天", "不對"]),
+            ("你明天有空嗎？阿不對，是後天有嗎？", ["後天"], ["明天", "不對"]),
+            ("我們約明天三點阿不對，是下午4:30 OK嗎？", ["4:30"], ["三點", "不對"]),
+            ("我覺得我們先去看電影，阿不對，我是說先去吃飯", ["吃飯"], ["電影", "不對"]),
             ("um so I think we should uh ship it on Friday I mean Thursday", ["Thursday", "ship"], ["Friday", "uh"]),
             // 4. formatting
             ("我要買三樣東西第一個是牛奶然後第二個是雞蛋第三個是麵包", ["牛奶", "雞蛋", "麵包", "\n"], []),
@@ -49,8 +53,8 @@ struct EvaluateRefinement {
         var failed = false
         for (input, required, removed) in cases {
             let engine = FoundationModelsEngine()
-            let draft = try await engine.draft(input)
-            let result = RefinementResult(original: input, refined: RefinementPolicy.preserveWording(original: input, candidate: draft))
+            let result = try await engine.refine(input)
+            let draft = result.refined
             let preserved = required.allSatisfy { result.refined.contains($0) }
             let cleaned = removed.allSatisfy { !result.refined.contains($0) }
             let passed = preserved && cleaned

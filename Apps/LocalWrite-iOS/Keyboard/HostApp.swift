@@ -12,6 +12,7 @@ enum HostApp {
         lastProbe = ""
         var candidates: [NSObject] = [controller]
         if let parent = controller.parent { candidates.append(parent) }
+        if let context = controller.extensionContext { candidates.append(context) }
         for object in candidates {
             for key in ["_hostBundleID", "_hostApplicationBundleIdentifier"]
             where object.responds(to: NSSelectorFromString(key)) {
@@ -25,13 +26,66 @@ enum HostApp {
     }
 
     @MainActor private static func hostPID(_ candidates: [NSObject]) -> pid_t? {
-        for object in candidates where object.responds(to: NSSelectorFromString("_hostPID")) {
-            if let pid = (object.value(forKey: "_hostPID") as? NSNumber)?.int32Value, pid > 0 {
-                lastProbe += "pid=\(pid) "
+        // The extension's XPC connection usually leads to the process hosting the keyboard.
+        for object in candidates {
+            for key in ["_auxiliaryConnection", "_connection", "connection"] where object.responds(to: NSSelectorFromString(key)) {
+                if let connection = object.value(forKey: key) as? NSXPCConnection {
+                    lastProbe += "\(type(of: object)).\(key).pid=\(connection.processIdentifier) "
+                    if connection.processIdentifier > 0 { return connection.processIdentifier }
+                }
+            }
+        }
+        for object in candidates {
+            for key in ["_hostPID", "_hostProcessIdentifier", "hostPID"] where object.responds(to: NSSelectorFromString(key)) {
+            if let pid = (object.value(forKey: key) as? NSNumber)?.int32Value, pid > 0 {
+                lastProbe += "\(key)=\(pid) "
                 return pid
+            }
             }
         }
         return nil
+    }
+
+    /// Lists host-related methods and ivars on the objects around the keyboard, so the
+    /// on-device log shows which undocumented accessors this iOS version offers.
+    @MainActor
+    static func survey(_ controller: UIInputViewController) -> String {
+        var objects: [(String, AnyObject)] = [("controller", controller)]
+        if let parent = controller.parent { objects.append(("parent", parent)) }
+        if let context = controller.extensionContext { objects.append(("context", context)) }
+        objects.append(("proxy", controller.textDocumentProxy as AnyObject))
+        if let window = controller.view.window { objects.append(("window", window)) }
+        if let scene = controller.view.window?.windowScene { objects.append(("scene", scene)) }
+        let pattern = #/(?i)host|pid|bundle|audit|client|connection|process|remote|source/#
+        var lines: [String] = []
+        for (label, object) in objects {
+            var names = Set<String>()
+            var cls: AnyClass? = object_getClass(object)
+            var classes: [String] = []
+            while let current = cls, classes.count < 4, NSStringFromClass(current) != "NSObject" {
+                classes.append(NSStringFromClass(current))
+                var count: UInt32 = 0
+                if let methods = class_copyMethodList(current, &count) {
+                    for index in 0..<Int(count) {
+                        let name = NSStringFromSelector(method_getName(methods[index]))
+                        if name.contains(pattern) { names.insert(name) }
+                    }
+                    free(methods)
+                }
+                if let ivars = class_copyIvarList(current, &count) {
+                    for index in 0..<Int(count) {
+                        if let raw = ivar_getName(ivars[index]) {
+                            let name = String(cString: raw)
+                            if name.contains(pattern) { names.insert("ivar:" + name) }
+                        }
+                    }
+                    free(ivars)
+                }
+                cls = class_getSuperclass(current)
+            }
+            lines.append("\(label)[\(classes.joined(separator: ">"))]: \(names.sorted().prefix(40).joined(separator: ","))")
+        }
+        return lines.joined(separator: " | ")
     }
 
     /// RunningBoard can map a process identifier to its bundle when the sandbox allows it.

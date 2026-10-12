@@ -87,4 +87,25 @@ final class SpeechSessionTests: XCTestCase {
         XCTAssertNil(session.tick(at: 30))
         XCTAssertEqual(session.finish(at: 31), .endAudio)
     }
+
+    func testLongDictationKeepsEarlierSegments() {
+        var session = SpeechSession()
+        let id = session.begin(at: 0, maxDuration: 300, stopsOnSilence: false)
+        _ = session.receive(id: id, text: "今天先開會，然後整理報告。", final: false, error: nil)
+        // The recognizer starts over after a pause.
+        _ = session.receive(id: id, text: "下午", final: false, error: nil)
+        _ = session.receive(id: id, text: "下午再回信。", final: false, error: nil)
+        XCTAssertEqual(session.transcript, "今天先開會，然後整理報告。下午再回信。")
+        // A segment ends while the speaker keeps going: restart, keep the text.
+        XCTAssertEqual(session.receive(id: id, text: "下午再回信。", final: true, error: nil), .restart)
+        _ = session.receive(id: id, text: "晚上運動。", final: false, error: nil)
+        XCTAssertEqual(session.finish(at: 40), .endAudio)
+        XCTAssertEqual(session.receive(id: id, text: "晚上運動。", final: true, error: nil),
+                       .finished("今天先開會，然後整理報告。下午再回信。晚上運動。"))
+    }
+
+    func testJoinSpacesLatinWords() {
+        XCTAssertEqual(SpeechSession.join("see you", "tomorrow"), "see you tomorrow")
+        XCTAssertEqual(SpeechSession.join("明天見。", "好"), "明天見。好")
+    }
 }
