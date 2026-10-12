@@ -39,8 +39,7 @@ final class VoiceSessionHost: ObservableObject {
             await startSession()
             // Like Typeless, hop straight back to the field the user was typing in.
             guard warm else { return }
-            try? await Task.sleep(for: .milliseconds(300))
-            exchange.diagnose("app return: \(HostReturn.goBack(hostBundleID: ticket.hostBundleID))")
+            exchange.diagnose("app return: \(await HostReturn.goBack(hostBundleID: ticket.hostBundleID))")
         }
     }
 
@@ -176,6 +175,8 @@ final class VoiceSessionHost: ObservableObject {
                 fallback = true
             }
             guard let self, !Task.isCancelled, self.state?.requestID == command.requestID else { return }
+            // On-device only, to debug cleanup quality; the file stays in the App Group cache.
+            self.exchange?.diagnose("dictation \(command.mode.rawValue) fallback=\(fallback) raw=\(text) out=\(output)")
             self.state?.phase = .done; self.state?.text = output; self.state?.usedRawFallback = fallback
             self.state?.message = fallback ? "AI 暫時無法使用，已填入原始文字。" : ""
             self.publish()

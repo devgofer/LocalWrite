@@ -1,29 +1,45 @@
 import UIKit
 
 /// Switches back to the app the keyboard was typing in. iOS has no public API for this.
-/// The first route asks the system "back to <app>" breadcrumb, shown because the keyboard
-/// opened LocalWrite by URL, to navigate back; the second opens a known bundle ID.
-/// Both are undocumented, checked before use, and fail silently.
+/// The first route asks the system "back to <app>" breadcrumb, which iOS attaches when
+/// another app opens LocalWrite by URL, to navigate back; the second opens a known bundle
+/// ID. Both are undocumented, checked before use, and fail silently.
 enum HostReturn {
+    /// Retries for a few seconds because iOS can attach the breadcrumb after activation.
     @MainActor
-    static func goBack(hostBundleID: String?) -> String {
-        let app = UIApplication.shared as NSObject
+    static func goBack(hostBundleID: String?) async -> String {
+        var notes: [String] = []
+        for attempt in 0..<15 {
+            if let result = sendBreadcrumb(notes: &notes) { return "attempt \(attempt): \(result)" }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        if let hostBundleID, hostBundleID != Bundle.main.bundleIdentifier, open(bundleID: hostBundleID) {
+            return "opened \(hostBundleID)"
+        }
+        return "no route: " + Array(Set(notes)).sorted().joined(separator: "; ")
+    }
+
+    @MainActor
+    private static func sendBreadcrumb(notes: inout [String]) -> String? {
         let actionSelector = NSSelectorFromString("_systemNavigationAction")
-        let sendSelector = NSSelectorFromString("sendResponseForDestination:")
-        if app.responds(to: actionSelector),
-           let action = app.perform(actionSelector)?.takeUnretainedValue() as? NSObject,
-           action.responds(to: sendSelector) {
+        var owners: [NSObject] = [UIApplication.shared]
+        owners += UIApplication.shared.connectedScenes.map { $0 as NSObject }
+        for owner in owners {
+            let name = String(describing: type(of: owner))
+            guard owner.responds(to: actionSelector) else { notes.append("\(name) lacks action"); continue }
+            guard let action = owner.perform(actionSelector)?.takeUnretainedValue() as? NSObject else {
+                notes.append("\(name) action nil"); continue
+            }
+            let sendSelector = NSSelectorFromString("sendResponseForDestination:")
+            guard action.responds(to: sendSelector) else { notes.append("\(type(of: action)) lacks send"); continue }
             let destinations = action.responds(to: NSSelectorFromString("destinations"))
                 ? (action.value(forKey: "destinations") as? [NSNumber]) ?? [] : []
             let destination = destinations.first?.uintValue ?? 0
             typealias Send = @convention(c) (NSObject, Selector, UInt) -> Void
             unsafeBitCast(action.method(for: sendSelector), to: Send.self)(action, sendSelector, destination)
-            return "breadcrumb destination=\(destination) of \(destinations)"
+            return "\(name) breadcrumb destination=\(destination) of \(destinations)"
         }
-        if let hostBundleID, hostBundleID != Bundle.main.bundleIdentifier, open(bundleID: hostBundleID) {
-            return "opened \(hostBundleID)"
-        }
-        return "no route (breadcrumb \(app.responds(to: actionSelector) ? "present" : "missing"))"
+        return nil
     }
 
     private static func open(bundleID: String) -> Bool {

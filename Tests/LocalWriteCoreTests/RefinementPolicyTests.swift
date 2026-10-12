@@ -43,4 +43,16 @@ final class RefinementPolicyTests: XCTestCase {
         XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "先做登入。"), raw)
         XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "我覺得我們這週要先把登入頁面做完，下週再處理付款流程。"), raw)
     }
+
+    func testAcceptsBetterWordChoiceButNotTranslation() {
+        let raw = "就是那個報告我還沒有弄好弄好之後我會再傳給你看看"
+        let polished = "那份報告我還沒完成，完成後再傳給你看。"
+        XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: polished), polished)
+        XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "I haven't finished the report yet."), raw)
+    }
+    func testAcceptsSpokenNumbersAsDigits() {
+        let raw = "我們明天下午三點在會議室開會"
+        XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "我們明天下午3點在會議室開會。"), "我們明天下午3點在會議室開會。")
+        XCTAssertEqual(RefinementPolicy.preserveWording(original: raw, candidate: "我們明天下午4點在會議室開會。"), raw)
+    }
 }

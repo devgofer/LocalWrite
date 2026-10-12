@@ -27,4 +27,9 @@ final class RefinementResultTests: XCTestCase {
 
         XCTAssertFalse(result.changed)
     }
+
+    func testTidyFixesDoubledPronounAndEnglishPunctuation() {
+        XCTAssertEqual(FoundationModelsEngine.tidy("我我想問一下，謝謝。"), "我想問一下，謝謝。")
+        XCTAssertEqual(FoundationModelsEngine.tidy("I was thinking we could grab lunch。"), "I was thinking we could grab lunch.")
+    }
 }
