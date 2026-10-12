@@ -92,7 +92,7 @@ public final class SpeechRecognizer {
                 // Read the callback-owned buffer here; only scalars cross actors.
                 let decibels = Self.decibels(buffer)
                 let speechLike = decibels > -42
-                let level = Float(min(max((decibels + 55) / 45, 0), 1))
+                let level = Float(min(max((decibels + 55) / 45, 0), 1))  // same scale as level(_:)
                 let time = ProcessInfo.processInfo.systemUptime
                 Task { @MainActor [weak self] in
                     self?.session.audio(id: id, speechLike: speechLike, at: time)
@@ -181,6 +181,11 @@ public final class SpeechRecognizer {
         }
     }
 
+    /// Loudness from 0 (silence) to 1 (loud speech).
+    nonisolated public static func level(_ buffer: AVAudioPCMBuffer) -> Float {
+        Float(min(max((decibels(buffer) + 55) / 45, 0), 1))
+    }
+
     nonisolated private static func decibels(_ buffer: AVAudioPCMBuffer) -> Float {
         guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return -100 }
         var sum: Float = 0
@@ -236,10 +241,15 @@ public enum SpeechRecognizerError: LocalizedError {
 public final class SpeechAudioFeed: @unchecked Sendable {
     private let lock = NSLock()
     private var request: AudioRequest?
-    public init() {}
+    private let levelHandler: (@Sendable (Float) -> Void)?
+    /// `onLevel` receives loudness from 0 to 1 on the audio queue for every buffer.
+    public init(onLevel: (@Sendable (Float) -> Void)? = nil) { levelHandler = onLevel }
     /// Created outside actor isolation; AVAudioEngine invokes it on its audio queue.
     public func makeTapHandler() -> AVAudioNodeTapBlock {
-        { @Sendable [self] buffer, _ in append(buffer) }
+        { @Sendable [self] buffer, _ in
+            append(buffer)
+            if let levelHandler { levelHandler(SpeechRecognizer.level(buffer)) }
+        }
     }
     fileprivate func set(_ request: AudioRequest?) {
         lock.lock(); defer { lock.unlock() }

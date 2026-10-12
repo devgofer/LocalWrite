@@ -34,4 +34,8 @@ The Foundation Models prompt is intentionally short because Apple's current guid
 
 The engine rejects empty model output. Updated 2026-10-13 to match Typeless (fillers, repetition, self-correction, formatting, word choice). The output falls back to the original transcript when more than 40% of its words are new, a number value changes or appears, it shrinks below 30% or grows past 150% of the original, it switches between Chinese and English, it drops an uncertainty word (可能、應該、maybe…), or the utterance is three words or fewer. Decimal punctuation, symbols, and English word boundaries are preserved by the validation.
 
-Run `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh Scripts/evaluate-refinement.sh` for 14 live-model cases covering the five Typeless features (13 pass on 2026-10-13; "三張不是四張" without commas keeps the first number). These checks complement deterministic unit tests; they do not establish semantic correctness for all possible speech.
+Run `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh Scripts/evaluate-refinement.sh` for 14 cleanup cases covering the five Typeless features plus 4 per-app cases (17 of 18 pass on 2026-10-13; "三張不是四張" without commas keeps the first number). These checks complement deterministic unit tests; they do not establish semantic correctness for all possible speech.
+
+## Per-app tone (2026-10-13)
+
+The prompt names the destination and its style (email, chat, document, general). On Mac it comes from the frontmost app's bundle ID, and from the window title for browsers (a Gmail tab counts as email). iOS does not reveal the host app to keyboards, so the keyboard sends `chat` when the field has a Send return key or a social keyboard, otherwise `general`. Greeting punctuation is then applied deterministically: "Hi Anna," on its own line for email, "Hi, Anna, …" for chat.

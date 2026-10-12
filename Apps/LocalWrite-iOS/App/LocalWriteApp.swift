@@ -10,7 +10,6 @@ struct LocalWriteApp: App {
 struct HomeView: View {
     @StateObject private var host = VoiceSessionHost()
     @State private var language = SharedSettings.shared().targetLanguage
-    @State private var minutes = SharedSettings.shared().sessionMinutes
 
     var body: some View {
         NavigationStack {
@@ -23,9 +22,7 @@ struct HomeView: View {
                             .frame(width: 84, height: 84)
                             .background(Circle().fill(Color(.secondarySystemFill)))
                         Text(host.message).multilineTextAlignment(.center)
-                        if host.warm, let expiresAt = host.expiresAt {
-                            Text("剩餘 \(Text(timerInterval: Date.now...expiresAt, countsDown: true))")
-                                .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                        if host.warm {
                             Button("停止待命", role: .destructive) { host.endSession() }
                                 .buttonStyle(.bordered)
                         } else {
@@ -39,9 +36,6 @@ struct HomeView: View {
                     Picker("翻譯成", selection: $language) {
                         ForEach(TranslationLanguage.all) { Text($0.displayName).tag($0.code) }
                     }
-                    Picker("待命時間", selection: $minutes) {
-                        ForEach(SharedSettings.sessionMinuteChoices, id: \.self) { Text("\($0) 分鐘").tag($0) }
-                    }
                 }
                 Section("第一次使用") {
                     Text("設定 → 一般 → 鍵盤 → 鍵盤 → 新增鍵盤 → LocalWrite，然後開啟「允許完整取用」。")
@@ -53,7 +47,6 @@ struct HomeView: View {
             .navigationTitle("LocalWrite")
         }
         .onChange(of: language) { _, value in SharedSettings.shared().targetLanguage = value }
-        .onChange(of: minutes) { _, value in SharedSettings.shared().sessionMinutes = value }
         .onOpenURL { host.open($0) }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { notification in
             guard let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,

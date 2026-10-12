@@ -40,6 +40,12 @@ struct EvaluateRefinement {
             // must stay an edit
             ("幫我寫一封信給老闆說我明天請假", ["老闆", "明天", "請假"], [])
         ]
+        let contextCases: [(String, WritingContext, [String])] = [
+            ("hi anna are you free tomorrow afternoon", .init(appName: "Gmail", style: .email), ["Hi Anna,\n"]),
+            ("hi anna are you free tomorrow afternoon", .init(appName: "WhatsApp", style: .chat), ["Hi, Anna"]),
+            ("嗨 anna 明天下午有空嗎", .init(appName: "Mail", style: .email), ["Anna", "\n"]),
+            ("hi anna are you free tomorrow afternoon", .init(appName: "Notes", style: .document), ["Anna", "tomorrow"])
+        ]
         var failed = false
         for (input, required, removed) in cases {
             let engine = FoundationModelsEngine()
@@ -51,6 +57,13 @@ struct EvaluateRefinement {
             failed = failed || !passed
             let fellBack = result.refined == input.trimmingCharacters(in: .whitespacesAndNewlines)
             log("\(passed ? "PASS" : "FAIL")\(fellBack ? " (unchanged)" : "")\nInput: \(input)\nOutput: \(result.refined)\(fellBack ? "\nModel: \(draft)" : "")")
+        }
+        for (input, context, required) in contextCases {
+            let draft = try await FoundationModelsEngine().draft(input, context: context)
+            let output = context.formatGreeting(RefinementPolicy.preserveWording(original: input, candidate: draft))
+            let passed = required.allSatisfy { output.contains($0) }
+            failed = failed || !passed
+            log("\(passed ? "PASS" : "FAIL") [\(context.style.rawValue)]\nInput: \(input)\nOutput: \(output)\(output == input ? "\nModel: \(draft)" : "")")
         }
         if failed { throw EvaluationError.changedMeaningOrRetainedFiller }
     }

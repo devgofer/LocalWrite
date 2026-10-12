@@ -41,15 +41,17 @@ public struct VoiceState: Codable, Equatable, Sendable {
     public var text: String
     /// True when the model failed and `text` is the unedited transcript.
     public var usedRawFallback: Bool
+    /// Microphone loudness, 0 to 1, while recording, for the keyboard's waveform.
+    public var level: Float
     public var message: String
     public var expiresAt: Date
     public var updatedAt: Date
 
     public init(sessionID: UUID, phase: Phase, requestID: UUID? = nil, text: String = "",
-                usedRawFallback: Bool = false, message: String = "",
+                usedRawFallback: Bool = false, level: Float = 0, message: String = "",
                 expiresAt: Date, updatedAt: Date = .now) {
         self.sessionID = sessionID; self.phase = phase; self.requestID = requestID
-        self.text = text; self.usedRawFallback = usedRawFallback; self.message = message
+        self.text = text; self.usedRawFallback = usedRawFallback; self.level = level; self.message = message
         self.expiresAt = expiresAt; self.updatedAt = updatedAt
     }
 
@@ -66,12 +68,14 @@ public struct KeyboardCommand: Codable, Equatable, Sendable {
     public let kind: Kind
     public let mode: DictationMode
     public let targetLanguage: String
+    /// The kind of field being typed in: email, chat, document or general.
+    public let style: String
     public let createdAt: Date
 
     public init(requestID: UUID, kind: Kind, mode: DictationMode = .clean,
-                targetLanguage: String = "en", createdAt: Date = .now) {
+                targetLanguage: String = "en", style: String = "general", createdAt: Date = .now) {
         id = UUID(); self.requestID = requestID; self.kind = kind
-        self.mode = mode; self.targetLanguage = targetLanguage; self.createdAt = createdAt
+        self.mode = mode; self.targetLanguage = targetLanguage; self.style = style; self.createdAt = createdAt
     }
 
     public func isFresh(at now: Date = .now) -> Bool {
@@ -153,7 +157,6 @@ public struct SharedSettings: @unchecked Sendable {
     public init(defaults: UserDefaults) { self.defaults = defaults }
     public static func shared() -> Self { Self(defaults: UserDefaults(suiteName: KeyboardExchange.appGroup) ?? .standard) }
 
-    public static let sessionMinuteChoices = [5, 15, 60]
 
     public var mode: DictationMode {
         get { defaults.string(forKey: "mode").flatMap(DictationMode.init(rawValue:)) ?? .clean }
@@ -162,10 +165,6 @@ public struct SharedSettings: @unchecked Sendable {
     public var targetLanguage: String {
         get { defaults.string(forKey: "targetLanguage") ?? "en" }
         nonmutating set { defaults.set(newValue, forKey: "targetLanguage") }
-    }
-    public var sessionMinutes: Int {
-        get { let value = defaults.integer(forKey: "sessionMinutes"); return value > 0 ? value : 15 }
-        nonmutating set { defaults.set(newValue, forKey: "sessionMinutes") }
     }
 }
 

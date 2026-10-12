@@ -74,7 +74,6 @@ final class KeyboardExchangeTests: XCTestCase {
         let defaults = UserDefaults(suiteName: "test.\(UUID().uuidString)")!
         let settings = SharedSettings(defaults: defaults)
         XCTAssertEqual(settings.mode, .clean)
-        XCTAssertEqual(settings.sessionMinutes, 15)
         settings.mode = .translate; settings.targetLanguage = "ja"
         XCTAssertEqual(settings.mode, .translate)
         XCTAssertEqual(TranslationLanguage.named(settings.targetLanguage).englishName, "Japanese")

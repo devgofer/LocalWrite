@@ -32,6 +32,7 @@ final class LocalWriteController: ObservableObject {
     private let authorizeSpeech: @MainActor () async -> SFSpeechRecognizerAuthorizationStatus
     private let authorizeMicrophone: @MainActor () async -> Bool
     private let captureTarget: @MainActor () throws -> TextInsertionTarget?
+    private let captureContext: @MainActor () -> WritingContext
     private let modelAvailability: @MainActor () -> Bool
     private let accessibilityStatus: @MainActor () -> Bool
     private let promptAccessibility: @MainActor () -> Void
@@ -41,6 +42,7 @@ final class LocalWriteController: ObservableObject {
     private var operation: Task<Void, Never>?
     private var operationID: UUID?
     private var target: TextInsertionTarget?
+    private var context = WritingContext.general
     private var permissionMonitor: Task<Void, Never>?
     private var speechStarted = false
 
@@ -50,6 +52,7 @@ final class LocalWriteController: ObservableObject {
         authorizeSpeech: @escaping @MainActor () async -> SFSpeechRecognizerAuthorizationStatus = { await SpeechRecognizer.requestAuthorization() },
         authorizeMicrophone: @escaping @MainActor () async -> Bool = { await SpeechRecognizer.requestMicrophoneAuthorization() },
         captureTarget: @escaping @MainActor () throws -> TextInsertionTarget? = { try TextInsertionTarget.capture() },
+        captureContext: @escaping @MainActor () -> WritingContext = { WritingContext.frontmost() },
         modelAvailability: @escaping @MainActor () -> Bool = { FoundationModelsEngine.isAvailable },
         accessibilityStatus: @escaping @MainActor () -> Bool = { AccessibilityPermission.isGranted },
         promptAccessibility: @escaping @MainActor () -> Void = { AccessibilityPermission.requestPrompt() },
@@ -61,6 +64,7 @@ final class LocalWriteController: ObservableObject {
         self.authorizeSpeech = authorizeSpeech
         self.authorizeMicrophone = authorizeMicrophone
         self.captureTarget = captureTarget
+        self.captureContext = captureContext
         self.modelAvailability = modelAvailability
         self.accessibilityStatus = accessibilityStatus
         self.promptAccessibility = promptAccessibility
@@ -156,6 +160,7 @@ final class LocalWriteController: ObservableObject {
             return
         }
 
+        context = captureContext()
         do { target = try captureTarget() }
         catch { fail(error.localizedDescription); return }
 
@@ -208,7 +213,7 @@ final class LocalWriteController: ObservableObject {
         operation = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await self.engine.refine(text)
+                let result = try await self.engine.refine(text, context: self.context)
                 guard self.operationID == id, !Task.isCancelled else { return }
                 self.savedText = result.refined
                 self.state = .inserting

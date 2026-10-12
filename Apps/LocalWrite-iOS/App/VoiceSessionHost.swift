@@ -16,10 +16,14 @@ final class VoiceSessionHost: ObservableObject {
     @Published private(set) var expiresAt: Date?
 
     private let audio = AVAudioEngine()
-    private let feed = SpeechAudioFeed()
+    private lazy var feed = SpeechAudioFeed { [weak self] level in
+        Task { @MainActor in self?.receive(level: level) }
+    }
+    private var lastLevelPublish = Date.distantPast
+    /// The session ends after this long without a dictation; nothing is shown to the user.
+    private static let idleTimeout: TimeInterval = 30 * 60
     private let speech = SpeechRecognizer()
     private let model = FoundationModelsEngine()
-    private let settings = SharedSettings.shared()
     private var exchange: KeyboardExchange?
     private var state: VoiceState?
     private var commandSignal: DarwinSignal?
@@ -69,7 +73,7 @@ final class VoiceSessionHost: ObservableObject {
             teardownAudio()
             message = "無法開啟麥克風：\(error.localizedDescription)"; return
         }
-        let expires = Date.now.addingTimeInterval(TimeInterval(settings.sessionMinutes * 60))
+        let expires = Date.now.addingTimeInterval(Self.idleTimeout)
         state = VoiceState(sessionID: UUID(), phase: .idle, expiresAt: expires)
         warm = true; expiresAt = expires
         setInputMuted(true)
@@ -80,7 +84,7 @@ final class VoiceSessionHost: ObservableObject {
         heartbeat = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self, let expiresAt = self.expiresAt else { return }
-                if Date.now >= expiresAt { self.endSession(message: "麥克風已自動關閉。下次點鍵盤麥克風會再開啟一次。"); return }
+                if Date.now >= expiresAt { self.endSession(message: "閒置一段時間，已自動關閉。下次點鍵盤麥克風會再開啟一次。"); return }
                 self.publish()
                 do { try await Task.sleep(for: .seconds(VoiceState.heartbeatInterval)) } catch { return }
             }
@@ -100,10 +104,15 @@ final class VoiceSessionHost: ObservableObject {
     }
 
     private func extend() {
-        let expires = Date.now.addingTimeInterval(TimeInterval(settings.sessionMinutes * 60))
+        let expires = Date.now.addingTimeInterval(Self.idleTimeout)
         expiresAt = expires; state?.expiresAt = expires
-        message = "已啟用。滑回原本的 App，點鍵盤麥克風就能說話。"
         publish()
+    }
+
+    private func receive(level: Float) {
+        guard state?.phase == .recording else { return }
+        state?.level = level
+        if Date.now.timeIntervalSince(lastLevelPublish) >= 0.08 { lastLevelPublish = .now; publish() }
     }
 
     private func readCommand() {
@@ -130,7 +139,8 @@ final class VoiceSessionHost: ObservableObject {
         speech.cancel()
         let id = command.requestID
         state?.requestID = id; state?.phase = .recording
-        state?.text = ""; state?.message = ""; state?.usedRawFallback = false
+        state?.text = ""; state?.message = ""; state?.usedRawFallback = false; state?.level = 0
+        extend()
         do { try startCapture() } catch {
             // The engine stopped (for example after a route change) and iOS will not restart
             // it in the background; the keyboard falls back to opening the app.
@@ -144,8 +154,9 @@ final class VoiceSessionHost: ObservableObject {
         do {
             try speech.start(externalAudioFeed: feed,
                 onPartialResult: { [weak self] text in
+                    // Kept for the result only; the keyboard shows a waveform, not the transcript.
                     guard let self, self.state?.requestID == id, self.state?.phase == .recording else { return }
-                    self.state?.text = text; self.publish()
+                    self.state?.text = text
                 }, onFinished: { [weak self] text in
                     guard let self, self.state?.requestID == id else { return }
                     self.setInputMuted(true)
@@ -165,7 +176,8 @@ final class VoiceSessionHost: ObservableObject {
             var fallback = false
             do {
                 let result = switch command.mode {
-                case .clean: try await model.refine(text)
+                case .clean:
+                    try await model.refine(text, context: WritingContext(style: .init(rawValue: command.style) ?? .general))
                 case .translate:
                     try await model.translate(text, into: TranslationLanguage.named(command.targetLanguage).englishName)
                 }

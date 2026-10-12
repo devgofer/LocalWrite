@@ -58,7 +58,9 @@ final class KeyboardModel: ObservableObject {
     enum Mic { case unavailable, cold, ready, recording, processing }
 
     @Published private(set) var mic: Mic = .cold
-    @Published private(set) var transcript = ""
+    static let barCount = 24
+    /// Recent microphone levels, oldest first, for the waveform.
+    @Published private(set) var levels = Array(repeating: CGFloat(0), count: barCount)
     @Published private(set) var notice = ""
     @Published var mode: DictationMode { didSet { settings.mode = mode } }
     @Published var showsGlobe = true
@@ -98,9 +100,9 @@ final class KeyboardModel: ObservableObject {
         }
         guard let state = exchange.state(), state.isWarm() else {
             if delivery.requestID != nil { delivery.cancel(); notice = "麥克風已關閉，請再點一次麥克風。" }
-            mic = .cold; transcript = ""; return
+            mic = .cold; resetLevels(); return
         }
-        guard let request = delivery.requestID else { mic = .ready; transcript = ""; return }
+        guard let request = delivery.requestID else { mic = .ready; resetLevels(); return }
         guard delivery.belongsTo(documentID: proxy.documentIdentifier) else {
             send(.cancel); delivery.cancel(); notice = "輸入框已變更，已取消。"; mic = .ready; return
         }
@@ -113,19 +115,20 @@ final class KeyboardModel: ObservableObject {
         }
         switch state.phase {
         case .recording:
-            mic = .recording; transcript = state.text
+            mic = .recording
+            levels.removeFirst(); levels.append(CGFloat(state.level))
         case .processing:
-            mic = .processing; transcript = state.text
+            mic = .processing
         case .done:
             if let text = delivery.consume(state, documentID: proxy.documentIdentifier) {
                 proxy.insertText(text)
                 notice = state.usedRawFallback ? state.message : ""
             }
-            mic = .ready; transcript = ""; sentAt = nil
+            mic = .ready; resetLevels(); sentAt = nil
         case .failed:
-            delivery.cancel(); notice = state.message; mic = .ready; transcript = ""
+            delivery.cancel(); notice = state.message; mic = .ready; resetLevels()
         case .idle, .ended:
-            delivery.cancel(); mic = .ready; transcript = ""
+            delivery.cancel(); mic = .ready; resetLevels()
         }
     }
 
@@ -133,7 +136,7 @@ final class KeyboardModel: ObservableObject {
         switch mic {
         case .ready:
             guard let proxy else { return }
-            notice = ""; transcript = ""
+            notice = ""; resetLevels()
             _ = delivery.begin(documentID: proxy.documentIdentifier)
             sentAt = .now
             send(.start)
@@ -142,7 +145,7 @@ final class KeyboardModel: ObservableObject {
             send(.finish)
             mic = .processing
         case .processing:
-            send(.cancel); delivery.cancel(); mic = .ready; transcript = ""
+            send(.cancel); delivery.cancel(); mic = .ready; resetLevels()
         case .cold, .unavailable:
             break
         }
@@ -161,6 +164,16 @@ final class KeyboardModel: ObservableObject {
         return ticket.url
     }
 
+    private func resetLevels() { levels = Array(repeating: 0, count: Self.barCount) }
+
+    /// iOS does not tell keyboards which app they are in, so the field's traits stand in:
+    /// a Send return key or a social keyboard means chat.
+    private var fieldStyle: String {
+        guard let proxy else { return "general" }
+        if proxy.returnKeyType == .send || proxy.keyboardType == .twitter { return "chat" }
+        return "general"
+    }
+
     func insertSpace() { proxy?.insertText(" ") }
     func insertReturn() { proxy?.insertText("\n") }
     func deleteBackward() { proxy?.deleteBackward() }
@@ -168,7 +181,8 @@ final class KeyboardModel: ObservableObject {
 
     private func send(_ kind: KeyboardCommand.Kind) {
         guard let exchange, let request = delivery.requestID else { return }
-        let command = KeyboardCommand(requestID: request, kind: kind, mode: mode, targetLanguage: settings.targetLanguage)
+        let command = KeyboardCommand(requestID: request, kind: kind, mode: mode,
+                                     targetLanguage: settings.targetLanguage, style: fieldStyle)
         do { try exchange.write(command) } catch {
             delivery.cancel(); notice = "無法與 LocalWrite 溝通，請再試一次。"; mic = .ready; return
         }
@@ -189,12 +203,18 @@ struct KeyboardView: View {
             .frame(maxWidth: 260)
             .disabled(model.mic == .recording || model.mic == .processing)
 
-            Text(status)
-                .font(.footnote)
-                .foregroundStyle(model.mic == .recording ? .primary : .secondary)
-                .lineLimit(2).truncationMode(.head)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 34)
+            Group {
+                if model.mic == .recording {
+                    Waveform(levels: model.levels)
+                } else {
+                    Text(status)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 34)
 
             MicButton(model: model)
 
@@ -215,9 +235,23 @@ struct KeyboardView: View {
         case .unavailable: model.notice
         case .cold: model.notice.isEmpty ? "點麥克風開啟 LocalWrite，滑回這裡就能說話" : model.notice
         case .ready: model.notice.isEmpty ? "點麥克風開始說話" : model.notice
-        case .recording: model.transcript.isEmpty ? "聆聽中⋯" : model.transcript
+        case .recording: ""
         case .processing: model.mode == .clean ? "整理中⋯" : "翻譯中⋯"
         }
+    }
+}
+
+/// Bars that move with the speaker's voice, newest on the right.
+private struct Waveform: View {
+    let levels: [CGFloat]
+    var body: some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+                Capsule().fill(Color.accentColor).frame(width: 3, height: 4 + level * 26)
+            }
+        }
+        .animation(.easeOut(duration: 0.1), value: levels)
+        .accessibilityLabel("聆聽中")
     }
 }
 
