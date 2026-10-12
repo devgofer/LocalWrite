@@ -7,6 +7,8 @@ import LocalWriteCore
 final class CapsuleModel: ObservableObject {
     static let barCount = 16
     @Published var state: WriteState = .idle
+    var onCancel: () -> Void = {}
+    var onConfirm: () -> Void = {}
     @Published private(set) var levels = Array(repeating: CGFloat(0), count: barCount)
 
     func push(_ level: Float) {
@@ -21,9 +23,18 @@ final class CapsulePanel: NSPanel {
     private var capsuleVisible = false
     private let model = CapsuleModel()
 
+    /// ✕ discards the recording; ✓ finishes and inserts it.
+    func setActions(cancel: @escaping () -> Void, confirm: @escaping () -> Void) {
+        model.onCancel = cancel; model.onConfirm = confirm
+    }
+
+    // Clicking the buttons must not take focus from the app being typed into.
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 240, height: 44),
+            contentRect: NSRect(x: 0, y: 0, width: 260, height: 44),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -34,9 +45,10 @@ final class CapsulePanel: NSPanel {
         backgroundColor = .clear
         isOpaque = false
         hasShadow = true
-        ignoresMouseEvents = true
+        ignoresMouseEvents = false
+        becomesKeyOnlyIfNeeded = true
         alphaValue = 0
-        contentView = NSHostingView(rootView: CapsuleView(model: model))
+        contentView = FirstClickHostingView(rootView: CapsuleView(model: model))
     }
 
     func update(state: WriteState) {
@@ -84,16 +96,20 @@ struct CapsuleView: View {
             Group {
                 switch model.state {
                 case .listening:
-                    HStack(alignment: .center, spacing: 3) {
-                        ForEach(Array(model.levels.enumerated()), id: \.offset) { _, level in
-                            Capsule()
-                                .fill(.white)
-                                .frame(width: 3, height: 4 + level * 18)
+                    HStack(spacing: 10) {
+                        CapsuleButton(systemImage: "xmark", label: "取消", action: model.onCancel)
+                        HStack(alignment: .center, spacing: 3) {
+                            ForEach(Array(model.levels.enumerated()), id: \.offset) { _, level in
+                                Capsule()
+                                    .fill(.white)
+                                    .frame(width: 3, height: 4 + level * 18)
+                            }
                         }
+                        .animation(.easeOut(duration: 0.08), value: model.levels)
+                        .frame(height: 24)
+                        CapsuleButton(systemImage: "checkmark", label: "完成", action: model.onConfirm)
                     }
-                    .animation(.easeOut(duration: 0.08), value: model.levels)
-                    .frame(height: 24)
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, 6)
                 case .refining, .inserting:
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small).tint(.white)
@@ -114,6 +130,30 @@ struct CapsuleView: View {
             .overlay(Capsule().stroke(.white.opacity(0.14)))
             Spacer(minLength: 0)
         }
-        .frame(width: 240, height: 44)
+        .frame(width: 260, height: 44)
     }
+}
+
+private struct CapsuleButton: View {
+    let systemImage: String
+    let label: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(.white.opacity(0.18)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+/// The panel never becomes key, so the first click must reach the buttons.
+private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

@@ -18,14 +18,9 @@ final class GlobalShortcutMonitor {
             return noErr
         }, 1, &event, Unmanaged.passUnretained(self).toOpaque(), &handler)
         guard status == noErr else { stop(); throw ShortcutError.unavailable }
-        let modifier: UInt32
-        switch LocalWriteSettings.shortcutModifier {
-        case "control": modifier = UInt32(controlKey)
-        case "command": modifier = UInt32(cmdKey)
-        default: modifier = UInt32(optionKey)
-        }
+        let shortcut = LocalWriteSettings.shortcut
         let id = EventHotKeyID(signature: 0x4C575254, id: 1)
-        guard RegisterEventHotKey(UInt32(kVK_Space), modifier, id, GetApplicationEventTarget(), 0, &hotKey) == noErr else {
+        guard RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, id, GetApplicationEventTarget(), 0, &hotKey) == noErr else {
             stop()
             throw ShortcutError.unavailable
         }
@@ -44,5 +39,5 @@ final class GlobalShortcutMonitor {
 
 private enum ShortcutError: LocalizedError {
     case unavailable
-    var errorDescription: String? { "This shortcut is already in use. Choose another modifier in Settings." }
+    var errorDescription: String? { "This shortcut is already in use. Choose another one in Settings." }
 }

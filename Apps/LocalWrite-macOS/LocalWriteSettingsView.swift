@@ -2,31 +2,31 @@ import SwiftUI
 struct LocalWriteSettingsView: View {
     @ObservedObject var controller: LocalWriteController
 
-    @AppStorage(LocalWriteSettings.shortcutModifierKey)
-    private var shortcutModifier = LocalWriteSettings.defaultShortcutModifier
+    @State private var shortcut = LocalWriteSettings.shortcut
+    @State private var recording = false
+    @State private var shortcutError: String?
+    @State private var monitor: Any?
 
     var body: some View {
         Form {
-            Section("Shortcut") {
-                Picker("Modifier", selection: $shortcutModifier) {
-                    Text("Option").tag("option")
-                    Text("Control").tag("control")
-                    Text("Command").tag("command")
-                }
-                .onChange(of: shortcutModifier) { _, _ in
-                    controller.restartShortcut()
-                }
-
+            Section("快捷鍵") {
                 HStack {
-                    Text("Key")
+                    Text("開始／完成聽寫")
                     Spacer()
-                    Text("Space")
-                        .foregroundStyle(.secondary)
+                    Button(recording ? "請按下新的快捷鍵⋯" : shortcut.displayName) {
+                        recording ? stopRecording() : startRecording()
+                    }
+                    .frame(minWidth: 140)
                 }
-
-                Text("Current shortcut: \(modifierLabel) + Space")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let shortcutError {
+                    Text(shortcutError).font(.caption).foregroundStyle(.red)
+                } else {
+                    Text("按一下按鈕，再按下想用的組合鍵（需包含 ⌘、⌥ 或 ⌃，或使用 F 鍵）。按 Esc 取消。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if shortcut != .default {
+                    Button("恢復預設（⌥Space）") { apply(.default) }
+                }
             }
 
             Section("Permissions") {
@@ -73,16 +73,43 @@ struct LocalWriteSettingsView: View {
             }
         }
         .onAppear { controller.refreshPermissions() }
+        .onDisappear { if recording { stopRecording() } }
         .formStyle(.grouped)
         .scenePadding()
         .frame(width: 420)
     }
 
-    private var modifierLabel: String {
-        switch shortcutModifier {
-        case "control": return "Control"
-        case "command": return "Command"
-        default: return "Option"
+    private func startRecording() {
+        shortcutError = nil
+        recording = true
+        // Let the current shortcut be recorded as itself instead of triggering dictation.
+        controller.pauseShortcut()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 && event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+                stopRecording(); return nil
+            }
+            guard let candidate = Shortcut(event: event) else {
+                shortcutError = "請包含 ⌘、⌥ 或 ⌃，例如 ⌥Space。"
+                return nil
+            }
+            stopRecording(apply: candidate)
+            return nil
+        }
+    }
+
+    private func stopRecording(apply candidate: Shortcut? = nil) {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        recording = false
+        if let candidate { apply(candidate) } else { controller.restartShortcut() }
+    }
+
+    private func apply(_ candidate: Shortcut) {
+        if controller.applyShortcut(candidate) {
+            shortcut = candidate; shortcutError = nil
+        } else {
+            shortcutError = "\(candidate.displayName) 已被其他 App 使用，請換一個。"
+            shortcut = LocalWriteSettings.shortcut
         }
     }
 }

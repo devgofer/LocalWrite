@@ -70,6 +70,8 @@ final class LocalWriteController: ObservableObject {
         self.promptAccessibility = promptAccessibility
         self.showAccessibilitySettings = showAccessibilitySettings
         self.speech.onLevel = { [weak self] level in self?.capsule.push(level: level) }
+        capsule.setActions(cancel: { [weak self] in self?.cancelListening() },
+                           confirm: { [weak self] in self?.toggleListening() })
         refreshPermissions()
         Logger(subsystem: "com.devgofer.LocalWrite", category: "Permissions")
             .notice("Accessibility granted: \(self.accessibilityGranted); app: \(Bundle.main.bundlePath, privacy: .public)")
@@ -148,6 +150,22 @@ final class LocalWriteController: ObservableObject {
     func restartShortcut() {
         do { try shortcut.start { [weak self] in self?.toggleListening() } }
         catch { fail(error.localizedDescription) }
+    }
+
+    func pauseShortcut() { shortcut.stop() }
+
+    /// Registers `candidate`, keeping the previous shortcut if it is taken.
+    func applyShortcut(_ candidate: Shortcut) -> Bool {
+        let previous = LocalWriteSettings.shortcut
+        LocalWriteSettings.shortcut = candidate
+        do {
+            try shortcut.start { [weak self] in self?.toggleListening() }
+            return true
+        } catch {
+            LocalWriteSettings.shortcut = previous
+            restartShortcut()
+            return false
+        }
     }
 
     private func startListening() {

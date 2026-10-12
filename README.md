@@ -114,7 +114,7 @@ LocalWrite/
 
 **Configured Modifier + Space → speak → silence → automatic insertion**
 
-The default shortcut is **Option + Space**. You can change the modifier in Settings. The capsule is intentionally the only visible interaction. There is no confirmation screen and no Insert button.
+The default shortcut is **Option + Space**; record any other combination in Settings. Press it once to start and again to finish. While listening, the capsule shows a waveform with ✕ (cancel) and ✓ (finish and insert).
 
 ### iOS
 
