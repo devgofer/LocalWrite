@@ -10,7 +10,9 @@ protocol SpeechCapturing {
     func start(onPartialResult: @escaping @MainActor (String) -> Void,
                onFinished: @escaping @MainActor (String) -> Void,
                onError: @escaping @MainActor (String) -> Void) throws
+    func finish()
     func cancel()
+    var onLevel: (@MainActor (Float) -> Void)? { get set }
 }
 
 extension SpeechRecognizer: SpeechCapturing {}
@@ -26,7 +28,7 @@ final class LocalWriteController: ObservableObject {
     @Published private(set) var accessibilityGranted = false
 
     private let engine: any LocalWriteEngine
-    private let speech: any SpeechCapturing
+    private var speech: any SpeechCapturing
     private let authorizeSpeech: @MainActor () async -> SFSpeechRecognizerAuthorizationStatus
     private let authorizeMicrophone: @MainActor () async -> Bool
     private let captureTarget: @MainActor () throws -> TextInsertionTarget?
@@ -40,6 +42,7 @@ final class LocalWriteController: ObservableObject {
     private var operationID: UUID?
     private var target: TextInsertionTarget?
     private var permissionMonitor: Task<Void, Never>?
+    private var speechStarted = false
 
     init(
         speech: any SpeechCapturing = SpeechRecognizer(),
@@ -62,6 +65,7 @@ final class LocalWriteController: ObservableObject {
         self.accessibilityStatus = accessibilityStatus
         self.promptAccessibility = promptAccessibility
         self.showAccessibilitySettings = showAccessibilitySettings
+        self.speech.onLevel = { [weak self] level in self?.capsule.push(level: level) }
         refreshPermissions()
         Logger(subsystem: "com.devgofer.LocalWrite", category: "Permissions")
             .notice("Accessibility granted: \(self.accessibilityGranted); app: \(Bundle.main.bundlePath, privacy: .public)")
@@ -80,16 +84,27 @@ final class LocalWriteController: ObservableObject {
 
     isolated deinit { permissionMonitor?.cancel() }
 
+    /// Press once to start, press again when you are done speaking.
     func toggleListening() {
-        if state == .listening {
-            operationID = nil
-            operation?.cancel()
-            operation = nil
-            speech.cancel()
-            if !transcript.isEmpty { savedText = transcript }
-            state = .idle
-            refreshCapsule()
-        } else { startListening() }
+        guard state == .listening else { startListening(); return }
+        guard speechStarted else { cancelListening(); return }
+        // Finishing waits for the final transcript, then refines and inserts it.
+        state = .refining
+        refreshCapsule()
+        speech.finish()
+    }
+
+    /// Discards the current recording.
+    func cancelListening() {
+        guard state == .listening || state == .refining else { return }
+        operationID = nil
+        operation?.cancel()
+        operation = nil
+        speech.cancel()
+        speechStarted = false
+        if !transcript.isEmpty { savedText = transcript }
+        state = .idle
+        refreshCapsule()
     }
 
     func refreshPermissions() {
@@ -146,6 +161,7 @@ final class LocalWriteController: ObservableObject {
 
         let id = UUID()
         operationID = id
+        speechStarted = false
         transcript = ""
         state = .listening
         refreshCapsule()
@@ -168,7 +184,6 @@ final class LocalWriteController: ObservableObject {
                         guard let self, self.operationID == id else { return }
                         self.transcript = text
                         self.savedText = text
-                        self.refreshCapsule()
                     },
                     onFinished: { [weak self] text in
                         guard let self, self.operationID == id else { return }
@@ -179,11 +194,13 @@ final class LocalWriteController: ObservableObject {
                         self.fail(message)
                     }
                 )
+                self.speechStarted = true
             } catch { self.fail(error.localizedDescription) }
         }
     }
 
     private func beginRefinement(with text: String, id: UUID) {
+        speechStarted = false
         transcript = text
         savedText = text
         state = .refining
@@ -212,13 +229,14 @@ final class LocalWriteController: ObservableObject {
 
     private func fail(_ message: String) {
         operationID = nil
+        speechStarted = false
         speech.cancel()
         state = .error(message)
         refreshCapsule()
     }
 
     private func refreshCapsule() {
-        capsule.update(state: state, transcript: transcript)
+        capsule.update(state: state)
         if state == .idle { capsule.hide() } else { capsule.show() }
     }
 }

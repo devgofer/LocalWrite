@@ -15,8 +15,11 @@ struct SpeechSession {
     private var lastSpeechAt: TimeInterval?
     private var finishingAt: TimeInterval?
     private var maxDuration: TimeInterval = 60
+    private var stopsOnSilence = true
 
-    mutating func begin(at time: TimeInterval, maxDuration: TimeInterval = 60) -> UUID {
+    /// With `stopsOnSilence` false, only `finish` or `maxDuration` ends the recording:
+    /// the speaker decides when they are done.
+    mutating func begin(at time: TimeInterval, maxDuration: TimeInterval = 60, stopsOnSilence: Bool = true) -> UUID {
         let id = UUID()
         self.id = id
         transcript = ""
@@ -24,6 +27,7 @@ struct SpeechSession {
         lastSpeechAt = nil
         finishingAt = nil
         self.maxDuration = maxDuration
+        self.stopsOnSilence = stopsOnSilence
         return id
     }
 
@@ -61,6 +65,11 @@ struct SpeechSession {
             id = nil
             return outcome()
         }
+        if time - startedAt >= maxDuration && !stopsOnSilence {
+            finishingAt = time
+            return .endAudio
+        }
+        guard stopsOnSilence else { return nil }
         if lastSpeechAt == nil, transcript.isEmpty, time - startedAt >= 10 {
             id = nil
             return .failed("No speech detected. Please try again.")

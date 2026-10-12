@@ -15,6 +15,8 @@ public final class SpeechRecognizer {
     private var partial: (@MainActor (String) -> Void)?
     private var completion: (@MainActor (String) -> Void)?
     private var failure: (@MainActor (String) -> Void)?
+    /// Microphone loudness from 0 to 1, about 40 times a second, for a waveform.
+    public var onLevel: (@MainActor (Float) -> Void)?
 
     public var currentLocale: Locale {
         get { recognizer?.locale ?? .current }
@@ -61,9 +63,8 @@ public final class SpeechRecognizer {
             throw SpeechRecognizerError.microphonePermissionRequired
         }
 
-        // An external feed has no silence detection: the keyboard user decides when to stop.
-        let id = session.begin(at: ProcessInfo.processInfo.systemUptime,
-                               maxDuration: externalAudioFeed == nil ? 60 : 180)
+        // Like Typeless, the speaker decides when to stop; silence never ends a recording.
+        let id = session.begin(at: ProcessInfo.processInfo.systemUptime, maxDuration: 300, stopsOnSilence: false)
         partial = onPartialResult
         completion = onFinished
         failure = onError
@@ -89,10 +90,13 @@ public final class SpeechRecognizer {
             node.installTap(onBus: 0, bufferSize: 1024, format: format) { @Sendable [weak self] buffer, _ in
                 input.append(buffer)
                 // Read the callback-owned buffer here; only scalars cross actors.
-                let speechLike = Self.isSpeechLike(buffer)
+                let decibels = Self.decibels(buffer)
+                let speechLike = decibels > -42
+                let level = Float(min(max((decibels + 55) / 45, 0), 1))
                 let time = ProcessInfo.processInfo.systemUptime
                 Task { @MainActor [weak self] in
                     self?.session.audio(id: id, speechLike: speechLike, at: time)
+                    self?.onLevel?(level)
                 }
             }
             tapInstalled = true
@@ -177,12 +181,12 @@ public final class SpeechRecognizer {
         }
     }
 
-    nonisolated private static func isSpeechLike(_ buffer: AVAudioPCMBuffer) -> Bool {
-        guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return false }
+    nonisolated private static func decibels(_ buffer: AVAudioPCMBuffer) -> Float {
+        guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return -100 }
         var sum: Float = 0
         for index in 0..<Int(buffer.frameLength) { sum += channels[0][index] * channels[0][index] }
         let rms = sqrt(sum / Float(buffer.frameLength))
-        return 20 * log10(max(rms, 0.000_01)) > -42
+        return 20 * log10(max(rms, 0.000_01))
     }
 }
 

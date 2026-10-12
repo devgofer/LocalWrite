@@ -78,4 +78,13 @@ final class SpeechSessionTests: XCTestCase {
         XCTAssertNil(session.tick(at: 90))
         XCTAssertEqual(session.tick(at: 180), .endAudio)
     }
+
+    func testSpeakerControlledSessionIgnoresSilence() {
+        var session = SpeechSession()
+        let id = session.begin(at: 0, maxDuration: 300, stopsOnSilence: false)
+        session.audio(id: id, speechLike: true, at: 0.5)
+        XCTAssertNil(session.tick(at: 5))
+        XCTAssertNil(session.tick(at: 30))
+        XCTAssertEqual(session.finish(at: 31), .endAudio)
+    }
 }

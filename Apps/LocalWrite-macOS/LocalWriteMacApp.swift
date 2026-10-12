@@ -37,8 +37,11 @@ struct LocalWriteMacApp: App {
 
             Divider()
 
-            Button(controller.state == .listening ? "停止聆聽" : "開始聆聽") {
+            Button(controller.state == .listening ? "完成並填入" : "開始聆聽") {
                 controller.toggleListening()
+            }
+            if controller.state == .listening {
+                Button("取消") { controller.cancelListening() }
             }
 
             Button("複製上次文字") { controller.copySavedText() }
@@ -47,9 +50,8 @@ struct LocalWriteMacApp: App {
 
             Divider()
 
-            SettingsLink {
-                Text("設定⋯")
-            }
+            Button("設定⋯") { SettingsWindow.show(controller: controller) }
+                .keyboardShortcut(",")
 
             Divider()
 
@@ -58,9 +60,5 @@ struct LocalWriteMacApp: App {
             }
         }
         .menuBarExtraStyle(.menu)
-
-        Settings {
-            LocalWriteSettingsView(controller: controller)
-        }
     }
 }

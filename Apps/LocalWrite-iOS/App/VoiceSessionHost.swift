@@ -5,8 +5,9 @@ import LocalWriteKeyboardBridge
 
 /// Keeps LocalWrite ready in the background so the keyboard can dictate in place.
 /// iOS keyboards cannot record, so the keyboard opens this app once per session.
-/// Silent playback keeps the app running; the microphone is on only between the
-/// keyboard's start and finish, as in Typeless.
+/// iOS refuses to start recording from the background, so the audio engine starts here
+/// in the foreground and keeps running (which also keeps the app alive). Between
+/// dictations its input is muted and buffers are discarded.
 @MainActor
 final class VoiceSessionHost: ObservableObject {
     @Published private(set) var warm = false
@@ -14,7 +15,6 @@ final class VoiceSessionHost: ObservableObject {
     @Published private(set) var message = "在任何輸入框切換到 LocalWrite 鍵盤，點麥克風就能開始。"
     @Published private(set) var expiresAt: Date?
 
-    private let keepAlive = BackgroundKeepAlive()
     private let audio = AVAudioEngine()
     private let feed = SpeechAudioFeed()
     private let speech = SpeechRecognizer()
@@ -38,10 +38,9 @@ final class VoiceSessionHost: ObservableObject {
         Task {
             await startSession()
             // Like Typeless, hop straight back to the field the user was typing in.
-            if warm, let host = ticket.hostBundleID, host != Bundle.main.bundleIdentifier {
-                let opened = HostReturn.open(bundleID: host)
-                exchange.diagnose("app return to \(host): \(opened)")
-            }
+            guard warm else { return }
+            try? await Task.sleep(for: .milliseconds(300))
+            exchange.diagnose("app return: \(HostReturn.goBack(hostBundleID: ticket.hostBundleID))")
         }
     }
 
@@ -66,7 +65,7 @@ final class VoiceSessionHost: ObservableObject {
             // here, in the foreground, so recording can later start from the background.
             try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
             try session.setActive(true)
-            try keepAlive.start()
+            try startCapture()
         } catch {
             teardownAudio()
             message = "無法開啟麥克風：\(error.localizedDescription)"; return
@@ -74,7 +73,8 @@ final class VoiceSessionHost: ObservableObject {
         let expires = Date.now.addingTimeInterval(TimeInterval(settings.sessionMinutes * 60))
         state = VoiceState(sessionID: UUID(), phase: .idle, expiresAt: expires)
         warm = true; expiresAt = expires
-        message = "已啟用。回到原本的 App，點鍵盤麥克風就能說話。麥克風只在你說話時開啟。"
+        setInputMuted(true)
+        message = "已啟用。回到原本的 App，點鍵盤麥克風就能說話。"
         commandSignal = DarwinSignal(observing: DarwinSignal.command) { [weak self] in
             Task { @MainActor in self?.readCommand() }
         }
@@ -117,11 +117,11 @@ final class VoiceSessionHost: ObservableObject {
             guard state?.requestID == command.requestID, state?.phase == .recording else { return }
             state?.phase = .processing; publish()
             speech.finish()
-            stopCapture()
+            setInputMuted(true)
         case .cancel:
             guard state?.requestID == command.requestID else { return }
             processing?.cancel(); processing = nil
-            speech.cancel(); stopCapture()
+            speech.cancel(); setInputMuted(true)
             state?.phase = .idle; state?.requestID = nil; state?.text = ""; publish()
         }
     }
@@ -133,11 +133,14 @@ final class VoiceSessionHost: ObservableObject {
         state?.requestID = id; state?.phase = .recording
         state?.text = ""; state?.message = ""; state?.usedRawFallback = false
         do { try startCapture() } catch {
-            // iOS refused to start recording in the background; the keyboard falls back to opening the app.
-            fail("LocalWrite 無法在背景開啟麥克風，請再點一次麥克風。")
-            endSession(message: "需要重新開啟麥克風：\(error.localizedDescription)")
+            // The engine stopped (for example after a route change) and iOS will not restart
+            // it in the background; the keyboard falls back to opening the app.
+            exchange?.diagnose("app restart capture failed: \(error)")
+            fail("麥克風已停止，請再點一次麥克風重新開啟。")
+            endSession(message: "麥克風已停止：\(error.localizedDescription)")
             return
         }
+        setInputMuted(false)
         publish()
         do {
             try speech.start(externalAudioFeed: feed,
@@ -146,7 +149,7 @@ final class VoiceSessionHost: ObservableObject {
                     self.state?.text = text; self.publish()
                 }, onFinished: { [weak self] text in
                     guard let self, self.state?.requestID == id else { return }
-                    self.stopCapture()
+                    self.setInputMuted(true)
                     self.process(text, for: command)
                 }, onError: { [weak self] message in
                     guard let self, self.state?.requestID == id else { return }
@@ -180,7 +183,7 @@ final class VoiceSessionHost: ObservableObject {
     }
 
     private func fail(_ message: String) {
-        stopCapture()
+        setInputMuted(true)
         state?.phase = .failed; state?.message = message; publish()
     }
 
@@ -192,7 +195,8 @@ final class VoiceSessionHost: ObservableObject {
     }
 
     private func startCapture() throws {
-        guard !tapInstalled else { return }
+        guard !(tapInstalled && audio.isRunning) else { return }
+        stopCapture()
         let node = audio.inputNode
         let format = node.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw SpeechRecognizerError.audioInputUnavailable }
@@ -202,7 +206,12 @@ final class VoiceSessionHost: ObservableObject {
         do { try audio.start() } catch { stopCapture(); throw error }
     }
 
-    /// Turns the microphone off; the audio session stays active for the next dictation.
+    /// Muted input keeps the session (and the app) alive without listening.
+    private func setInputMuted(_ muted: Bool) {
+        do { try AVAudioApplication.shared.setInputMuted(muted) }
+        catch { exchange?.diagnose("input mute \(muted) failed: \(error)") }
+    }
+
     private func stopCapture() {
         audio.stop()
         if tapInstalled { audio.inputNode.removeTap(onBus: 0); tapInstalled = false }
@@ -210,7 +219,7 @@ final class VoiceSessionHost: ObservableObject {
 
     private func teardownAudio() {
         stopCapture()
-        keepAlive.stop()
+        setInputMuted(false)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

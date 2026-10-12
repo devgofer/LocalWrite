@@ -6,17 +6,20 @@ import LocalWriteCore
 @MainActor
 private final class FakeSpeech: SpeechCapturing {
     var starts = 0
+    var finishes = 0
+    var onLevel: (@MainActor (Float) -> Void)?
     var partial: (@MainActor (String) -> Void)?
-    var finish: (@MainActor (String) -> Void)?
+    var finished: (@MainActor (String) -> Void)?
     var error: (@MainActor (String) -> Void)?
     func start(onPartialResult: @escaping @MainActor (String) -> Void,
                onFinished: @escaping @MainActor (String) -> Void,
                onError: @escaping @MainActor (String) -> Void) throws {
         starts += 1
         partial = onPartialResult
-        finish = onFinished
+        finished = onFinished
         error = onError
     }
+    func finish() { finishes += 1 }
     func cancel() {} // Intentionally retains callbacks to simulate late delivery.
 }
 
@@ -79,15 +82,30 @@ final class LocalWriteControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testLateResultAfterStopDoesNotRefineOrOverwriteText() async {
+    func testSecondPressFinishesInsteadOfDiscarding() async {
+        let speech = FakeSpeech()
+        let controller = makeController(speech)
+        controller.toggleListening()
+        for _ in 0..<20 where speech.starts == 0 { await Task.yield() }
+        speech.partial?("Keep talking")
+        controller.toggleListening()
+        XCTAssertEqual(speech.finishes, 1)
+        XCTAssertEqual(controller.state, .refining)
+        speech.finished?("Keep talking")
+        for _ in 0..<50 where controller.state == .refining { await Task.yield() }
+        XCTAssertEqual(controller.savedText, "Refined result.")
+    }
+
+    @MainActor
+    func testLateResultAfterCancelDoesNotRefineOrOverwriteText() async {
         let speech = FakeSpeech()
         let controller = makeController(speech)
         controller.toggleListening()
         for _ in 0..<20 where speech.starts == 0 { await Task.yield() }
         XCTAssertEqual(speech.starts, 1)
         speech.partial?("Keep this")
-        controller.toggleListening()
-        speech.finish?("stale result")
+        controller.cancelListening()
+        speech.finished?("stale result")
         speech.error?("late error")
         XCTAssertEqual(controller.state, .idle)
         XCTAssertEqual(controller.savedText, "Keep this")
@@ -99,7 +117,7 @@ final class LocalWriteControllerTests: XCTestCase {
         let controller = makeController(speech)
         controller.toggleListening()
         for _ in 0..<20 where speech.starts == 0 { await Task.yield() }
-        speech.finish?("raw result")
+        speech.finished?("raw result")
         for _ in 0..<50 where controller.state == .refining { await Task.yield() }
         XCTAssertEqual(controller.savedText, "Refined result.")
         guard case .error = controller.state else { return XCTFail("missing target should report insertion error") }
