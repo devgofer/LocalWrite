@@ -27,16 +27,11 @@ The visual direction is inspired by the simplicity of Typeless: one compact caps
 
 ### iOS
 
-The iOS experience is split into two pieces:
+LocalWrite is a three-key voice keyboard: **Delete · Microphone · Return**.
 
-1. Open the LocalWrite app and tap **Speak**.
-2. Capture voice in the containing app.
-3. Transcribe with on-device speech recognition.
-4. Refine the transcript with Apple Foundation Models.
-5. Show the transcript and refined result in the app.
-6. Use the LocalWrite keyboard as the lightweight input-mode shell.
+Tap the keyboard microphone to open LocalWrite and start recording. Return to the original text field using the system back control, then tap the microphone again to finish, refine on-device, and insert. Long-press Return to switch keyboards. Audio capture stops when recording ends. Automatic return to the host app remains unimplemented; this is a device-test build, and the intended uninterrupted keyboard experience remains a work in progress.
 
-The keyboard extension does **not** attempt to record microphone input. This is intentional: third-party custom keyboards do not have direct microphone access, so voice capture belongs in the containing app.
+The helper and keyboard use a shared App Group, requiring Full Access for the keyboard. See [setup and validation status](Documentation/Keyboard-and-Permissions-2026-10-08.md).
 
 ## Core principle
 
@@ -123,9 +118,9 @@ The default shortcut is **Option + Space**. You can change the modifier in Setti
 
 ### iOS
 
-**Open LocalWrite app → voice capture → on-device refinement**
+**Keyboard microphone → recording app → return to text field → microphone → refinement → insertion**
 
-The custom keyboard extension is currently a platform-compatible shell. It does not expose a microphone button because Apple's third-party keyboard sandbox does not provide microphone access.
+The keyboard creates a one-use launch request, opens its recording app with a SwiftUI Link, then exchanges stop/cancel commands and results through a local App Group. No manual five-minute session is required. Results are inserted only into the requesting, unchanged text field.
 
 ## Requirements
 
@@ -161,7 +156,7 @@ On iOS, the keyboard extension is intentionally non-networked. Voice capture is 
 
 ## Status
 
-The core macOS architecture is implemented. The Xcode target definition is now included, but final signing and physical-device validation still need to happen on a Mac with the appropriate Xcode and Apple Developer configuration.
+The Mac app is signed and its Accessibility grant was verified in the running process after replacing a stale code-signature permission record. The iOS app and keyboard are signed and installed on a connected iPhone 17. End-to-end speech/keyboard verification is still in progress.
 
 The highest-value validation targets are:
 

@@ -1,43 +1,48 @@
 import AppKit
+import Carbon
 
+@MainActor
 final class GlobalShortcutMonitor {
-    private var monitor: Any?
+    private var hotKey: EventHotKeyRef?
+    private var handler: EventHandlerRef?
+    private var onTrigger: (@MainActor () -> Void)?
 
-    func start(onTrigger: @escaping () -> Void) {
+    func start(onTrigger: @escaping @MainActor () -> Void) throws {
         stop()
-
-        monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 49,
-                  !event.isARepeat,
-                  Self.matchesConfiguredModifier(event.modifierFlags) else {
-                return
-            }
-
-            onTrigger()
+        self.onTrigger = onTrigger
+        var event = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
+            guard let context else { return OSStatus(eventNotHandledErr) }
+            let monitor = Unmanaged<GlobalShortcutMonitor>.fromOpaque(context).takeUnretainedValue()
+            Task { @MainActor [weak monitor] in monitor?.onTrigger?() }
+            return noErr
+        }, 1, &event, Unmanaged.passUnretained(self).toOpaque(), &handler)
+        guard status == noErr else { stop(); throw ShortcutError.unavailable }
+        let modifier: UInt32
+        switch LocalWriteSettings.shortcutModifier {
+        case "control": modifier = UInt32(controlKey)
+        case "command": modifier = UInt32(cmdKey)
+        default: modifier = UInt32(optionKey)
+        }
+        let id = EventHotKeyID(signature: 0x4C575254, id: 1)
+        guard RegisterEventHotKey(UInt32(kVK_Space), modifier, id, GetApplicationEventTarget(), 0, &hotKey) == noErr else {
+            stop()
+            throw ShortcutError.unavailable
         }
     }
 
     func stop() {
-        if let monitor {
-            NSEvent.removeMonitor(monitor)
-            self.monitor = nil
-        }
+        if let hotKey { UnregisterEventHotKey(hotKey) }
+        if let handler { RemoveEventHandler(handler) }
+        hotKey = nil
+        handler = nil
+        onTrigger = nil
     }
 
-    private static func matchesConfiguredModifier(_ flags: NSEvent.ModifierFlags) -> Bool {
-        switch LocalWriteSettings.shortcutModifier {
-        case "control":
-            return flags.contains(.control)
-        case "command":
-            return flags.contains(.command)
-        case "option":
-            return flags.contains(.option)
-        default:
-            return flags.contains(.option)
-        }
-    }
+    isolated deinit { stop() }
+}
 
-    deinit {
-        stop()
-    }
+private enum ShortcutError: LocalizedError {
+    case unavailable
+    var errorDescription: String? { "This shortcut is already in use. Choose another modifier in Settings." }
 }

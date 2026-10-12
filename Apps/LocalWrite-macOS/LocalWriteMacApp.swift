@@ -7,44 +7,53 @@ struct LocalWriteMacApp: App {
 
     var body: some Scene {
         MenuBarExtra("LocalWrite", systemImage: "waveform") {
-            Text(controller.modelAvailable ? "Model Ready" : "Model Unavailable")
-                .foregroundStyle(.secondary)
+            Text(controller.modelAvailable ? "● 模型就緒" : "○ 模型不可用")
 
-            HStack {
-                Image(systemName: controller.accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.circle")
-                Text(controller.accessibilityGranted ? "Accessibility Ready" : "Accessibility Required")
-            }
+            Text(controller.accessibilityGranted ? "✓ 輔助使用已授權" : "⚠️ 需要輔助使用權限")
 
-            HStack {
-                Image(systemName: controller.speechAuthorized ? "checkmark.circle.fill" : "exclamationmark.circle")
-                Text(controller.speechAuthorized ? "Speech Ready" : "Speech Permission Required")
-            }
+            Text(controller.speechAuthorized ? "✓ 語音辨識已授權" : "⚠️ 需要語音辨識權限")
+
+            Text(controller.microphoneAuthorized ? "✓ 麥克風已授權" : "⚠️ 需要麥克風權限")
+
+            Divider()
 
             if !controller.accessibilityGranted {
-                Button("Enable Accessibility") {
+                Button("授權輔助使用⋯") {
                     controller.requestAccessibility()
                 }
 
-                Button("Open Accessibility Settings") {
+                Button("開啟輔助使用設定⋯") {
                     controller.openAccessibilitySettings()
                 }
             }
 
+            if !controller.speechAuthorized || !controller.microphoneAuthorized {
+                Button("授權語音與麥克風⋯") {
+                    controller.requestSpeechAuthorization()
+                }
+            }
+
+            Button("重新整理權限狀態") { controller.refreshPermissions() }
+
             Divider()
 
-            Button(controller.state == .listening ? "Stop Listening" : "Start Listening") {
+            Button(controller.state == .listening ? "停止聆聽" : "開始聆聽") {
                 controller.toggleListening()
             }
+
+            Button("複製上次文字") { controller.copySavedText() }
+                .disabled(controller.savedText.isEmpty)
+            if case .error(let message) = controller.state { Text(message) }
 
             Divider()
 
             SettingsLink {
-                Text("Settings…")
+                Text("設定⋯")
             }
 
             Divider()
 
-            Button("Quit LocalWrite") {
+            Button("結束 LocalWrite") {
                 NSApplication.shared.terminate(nil)
             }
         }

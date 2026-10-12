@@ -72,3 +72,12 @@ The current iOS keyboard target is a platform-compatible extension shell. Apple 
 - [ ] Refined text is displayed correctly
 
 Apple's current custom keyboard documentation explicitly lists no microphone access for keyboards without open access, and custom keyboards remain sandboxed in a separate process. This limitation is a product constraint, not a LocalWrite implementation failure.
+
+
+## Automated regression checks (2026-10-06)
+
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift test`
+
+The suite covers stale speech callbacks, final-result waiting, empty-audio and final-result timeouts, error cleanup decisions, cancellation while permission is pending, retained text after failed insertion, clipboard ownership, and conservative model-output validation. Clipboard tests use an isolated test pasteboard. Controller tests inject fake recognition and model services and never request microphone access.
+
+For manual testing, verify permission grants, on-device locale support, sentence endings, clipboard Copy during insertion, switching focus during refinement, host apps without readable accessibility text, and iOS backgrounding/audio interruptions. The owner retained App Sandbox for this delivery; cross-app accessibility insertion remains a known platform limitation.

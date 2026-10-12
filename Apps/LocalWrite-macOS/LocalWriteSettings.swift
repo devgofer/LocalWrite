@@ -2,7 +2,7 @@ import Foundation
 
 enum LocalWriteSettings {
     static let shortcutModifierKey = "shortcutModifier"
-    static let shortcutKey = "shortcutKey"
+    static let shortcutKeyStorageKey = "shortcutKey"
 
     static let defaultShortcutModifier = "option"
     static let defaultShortcutKey = "Space"
@@ -12,6 +12,6 @@ enum LocalWriteSettings {
     }
 
     static var shortcutKey: String {
-        UserDefaults.standard.string(forKey: shortcutKey) ?? defaultShortcutKey
+        UserDefaults.standard.string(forKey: shortcutKeyStorageKey) ?? defaultShortcutKey
     }
 }

@@ -2,6 +2,9 @@ name: LocalWrite
 
 options:
   createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "26.0"
+    iOS: "26.0"
 
 packages:
   LocalWriteCore:
@@ -12,6 +15,7 @@ settings:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: YES
 
 targets:
   LocalWriteMac:
@@ -25,6 +29,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.devgofer.LocalWrite
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: AP6ML9U34X
+        CODE_SIGN_STYLE: Automatic
         INFOPLIST_FILE: Apps/LocalWrite-macOS/Info.plist
         CODE_SIGN_ENTITLEMENTS: Apps/LocalWrite-macOS/LocalWrite.entitlements
         PRODUCT_NAME: LocalWrite
@@ -40,9 +47,14 @@ targets:
         embed: true
       - package: LocalWriteCore
         product: LocalWriteCore
+      - package: LocalWriteCore
+        product: LocalWriteKeyboardBridge
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.devgofer.LocalWrite.iOS
+        DEVELOPMENT_TEAM: AP6ML9U34X
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Apps/LocalWrite-iOS/App/LocalWrite.entitlements
         INFOPLIST_FILE: Apps/LocalWrite-iOS/App/Info.plist
         PRODUCT_NAME: LocalWrite
         SWIFT_VERSION: "6.0"
@@ -54,11 +66,16 @@ targets:
       - path: Apps/LocalWrite-iOS/Keyboard
     dependencies:
       - package: LocalWriteCore
-        product: LocalWriteCore
+        product: LocalWriteKeyboardBridge
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.devgofer.LocalWrite.iOS.Keyboard
+        DEVELOPMENT_TEAM: AP6ML9U34X
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Apps/LocalWrite-iOS/Keyboard/LocalWriteKeyboard.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
         INFOPLIST_FILE: Apps/LocalWrite-iOS/Keyboard/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: LocalWrite
         PRODUCT_NAME: LocalWriteKeyboard
         SWIFT_VERSION: "6.0"
 

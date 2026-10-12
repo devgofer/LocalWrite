@@ -2,204 +2,245 @@ import Foundation
 import Speech
 import AVFoundation
 
-@available(macOS 13.0, iOS 16.0, *)
-public final class SpeechRecognizer: NSObject, @unchecked Sendable {
-    private let recognizer: SFSpeechRecognizer
+@MainActor
+public final class SpeechRecognizer {
+    private var recognizer: SFSpeechRecognizer?
     private let audioEngine = AVAudioEngine()
-    private let stateQueue = DispatchQueue(label: "com.devgofer.LocalWrite.speech-state")
-
-    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var audioRequest: AudioRequest?
+    private var externalFeed: SpeechAudioFeed?
     private var task: SFSpeechRecognitionTask?
-    private var silenceWorkItem: DispatchWorkItem?
-    private var latestTranscript = ""
-    private var completion: (@Sendable (String) -> Void)?
-    private let silenceTimeout: TimeInterval = 1.25
-    private let minimumSpeechDuration: TimeInterval = 0.25
-    private var speechStartedAt: Date?
+    private var timer: Task<Void, Never>?
+    private var session = SpeechSession()
+    private var tapInstalled = false
+    private var partial: (@MainActor (String) -> Void)?
+    private var completion: (@MainActor (String) -> Void)?
+    private var failure: (@MainActor (String) -> Void)?
 
-    public init(locale: Locale = .current) {
-        self.recognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))!
-        super.init()
+    public var currentLocale: Locale {
+        get { recognizer?.locale ?? .current }
+        set { recognizer = SFSpeechRecognizer(locale: newValue) }
     }
 
-    public static func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+    public init(locale: Locale = Locale(identifier: "zh-TW")) {
+        recognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer(locale: .current)
+    }
+
+    isolated deinit { cancel() }
+
+    nonisolated public static func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
+            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
         }
+    }
+
+    nonisolated public static func requestMicrophoneAuthorization() async -> Bool {
+        await AVCaptureDevice.requestAccess(for: .audio)
     }
 
     public func start(
-        onPartialResult: @escaping @Sendable (String) -> Void,
-        onFinished: @escaping @Sendable (String) -> Void
+        onPartialResult: @escaping @MainActor (String) -> Void,
+        onFinished: @escaping @MainActor (String) -> Void,
+        onError: @escaping @MainActor (String) -> Void
+    ) throws {
+        try start(externalAudioFeed: nil, onPartialResult: onPartialResult, onFinished: onFinished, onError: onError)
+    }
+
+    public func start(externalAudioFeed: SpeechAudioFeed?,
+        onPartialResult: @escaping @MainActor (String) -> Void,
+        onFinished: @escaping @MainActor (String) -> Void,
+        onError: @escaping @MainActor (String) -> Void
     ) throws {
         cancel()
-
-        guard recognizer.isAvailable else {
+        guard let recognizer, recognizer.isAvailable else {
             throw SpeechRecognizerError.serviceUnavailable
         }
-
         guard recognizer.supportsOnDeviceRecognition else {
             throw SpeechRecognizerError.onDeviceRecognitionUnavailable
         }
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            throw SpeechRecognizerError.microphonePermissionRequired
+        }
 
-        let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        recognitionRequest.shouldReportPartialResults = true
-        recognitionRequest.requiresOnDeviceRecognition = true
-
-        latestTranscript = ""
+        let id = session.begin(at: ProcessInfo.processInfo.systemUptime)
+        partial = onPartialResult
         completion = onFinished
-        speechStartedAt = nil
-        request = recognitionRequest
-
-        let inputNode = audioEngine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
-
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            request = nil
-            completion = nil
-            throw SpeechRecognizerError.audioInputUnavailable
+        failure = onError
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
         }
-
-        inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            recognitionRequest.append(buffer)
-            self?.processAudioLevel(buffer)
-        }
-
-        audioEngine.prepare()
+        request.addsPunctuation = true
+        let input = AudioRequest(request)
+        audioRequest = input
 
         do {
-            try audioEngine.start()
-        } catch {
-            stopAudioCapture()
-            request = nil
-            completion = nil
-            throw error
-        }
-
-        task = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self else { return }
-
-            self.stateQueue.async {
-                if let text = result?.bestTranscription.formattedString, !text.isEmpty {
-                    self.latestTranscript = text
-                    onPartialResult(text)
-
-                    if result?.isFinal == true {
-                        self.complete(with: text)
-                    }
-                } else if error != nil, !self.latestTranscript.isEmpty {
-                    self.complete(with: self.latestTranscript)
+            if let externalAudioFeed {
+                externalFeed = externalAudioFeed
+                externalAudioFeed.set(input)
+            } else {
+            let node = audioEngine.inputNode
+            let format = node.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                throw SpeechRecognizerError.audioInputUnavailable
+            }
+            node.installTap(onBus: 0, bufferSize: 1024, format: format) { @Sendable [weak self] buffer, _ in
+                input.append(buffer)
+                // Read the callback-owned buffer here; only scalars cross actors.
+                let speechLike = Self.isSpeechLike(buffer)
+                let time = ProcessInfo.processInfo.systemUptime
+                Task { @MainActor [weak self] in
+                    self?.session.audio(id: id, speechLike: speechLike, at: time)
                 }
             }
+            tapInstalled = true
+            }
+            task = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
+                let text = result?.bestTranscription.formattedString
+                let final = result?.isFinal ?? false
+                let message = error?.localizedDescription
+                Task { @MainActor [weak self] in
+                    guard let self, self.session.id == id else { return }
+                    let action = self.session.receive(id: id, text: text, final: final, error: message)
+                    if let text, !text.isEmpty { self.partial?(text) }
+                    self.handle(action)
+                }
+            }
+            if externalAudioFeed == nil {
+                audioEngine.prepare()
+                try audioEngine.start()
+            }
+            timer = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(100)) }
+                    catch { return }
+                    guard let self, self.session.id == id else { return }
+                    self.handle(self.session.tick(at: ProcessInfo.processInfo.systemUptime))
+                }
+            }
+        } catch {
+            cancel()
+            throw error
         }
+    }
+
+    public func finish() {
+        handle(session.finish(at: ProcessInfo.processInfo.systemUptime))
     }
 
     public func cancel() {
-        stateQueue.sync {
-            silenceWorkItem?.cancel()
-            silenceWorkItem = nil
-            task?.cancel()
-            task = nil
-            request?.endAudio()
-            request = nil
-            completion = nil
-            latestTranscript = ""
-            speechStartedAt = nil
+        session.cancel()
+        cleanup()
+    }
+
+    private func handle(_ action: SpeechSession.Action?) {
+        guard let action else { return }
+        switch action {
+        case .endAudio:
+            externalFeed?.set(nil)
             stopAudioCapture()
+            audioRequest?.end()
+            // Keep the recognition task alive until final or the bounded timeout.
+        case .finished(let text):
+            let callback = completion
+            cleanup()
+            callback?(text)
+        case .failed(let message):
+            let callback = failure
+            cleanup()
+            callback?(message)
         }
     }
 
-    private func processAudioLevel(_ buffer: AVAudioPCMBuffer) {
-        stateQueue.async { [weak self] in
-            guard let self else { return }
-
-            guard let channelData = buffer.floatChannelData,
-                  buffer.frameLength > 0,
-                  buffer.format.channelCount > 0 else {
-                return
-            }
-
-            let frameCount = Int(buffer.frameLength)
-            let channel = channelData[0]
-
-            var sumSquares: Float = 0
-            for index in 0..<frameCount {
-                let sample = channel[index]
-                sumSquares += sample * sample
-            }
-
-            let rms = sqrt(sumSquares / Float(frameCount))
-            let decibels = 20 * log10(max(rms, 0.000_01))
-            let isSpeechLike = decibels > -42
-
-            if isSpeechLike {
-                self.speechStartedAt = self.speechStartedAt ?? Date()
-                self.silenceWorkItem?.cancel()
-                self.silenceWorkItem = nil
-                return
-            }
-
-            guard !self.latestTranscript.isEmpty,
-                  let startedAt = self.speechStartedAt,
-                  Date().timeIntervalSince(startedAt) >= self.minimumSpeechDuration,
-                  self.silenceWorkItem == nil else {
-                return
-            }
-
-            let item = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.stateQueue.async {
-                    guard self.silenceWorkItem != nil else { return }
-                    self.request?.endAudio()
-                    self.complete(with: self.latestTranscript)
-                }
-            }
-
-            self.silenceWorkItem = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.silenceTimeout, execute: item)
-        }
-    }
-
-    private func complete(with text: String) {
-        let callback = completion
-        completion = nil
-
-        silenceWorkItem?.cancel()
-        silenceWorkItem = nil
+    private func cleanup() {
+        externalFeed?.set(nil)
+        externalFeed = nil
+        timer?.cancel()
+        timer = nil
         stopAudioCapture()
+        audioRequest?.end()
+        audioRequest = nil
         task?.cancel()
         task = nil
-        request = nil
-        speechStartedAt = nil
-
-        callback?(text)
+        partial = nil
+        completion = nil
+        failure = nil
     }
 
     private func stopAudioCapture() {
         audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
+        if tapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+    }
+
+    nonisolated private static func isSpeechLike(_ buffer: AVAudioPCMBuffer) -> Bool {
+        guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return false }
+        var sum: Float = 0
+        for index in 0..<Int(buffer.frameLength) { sum += channels[0][index] * channels[0][index] }
+        let rms = sqrt(sum / Float(buffer.frameLength))
+        return 20 * log10(max(rms, 0.000_01)) > -42
+    }
+}
+
+/// The audio callback and main actor share only this locked request adapter.
+/// All append/end accesses are serialized; audio buffers never leave the tap.
+fileprivate final class AudioRequest: @unchecked Sendable {
+    private let lock = NSLock()
+    private let request: SFSpeechAudioBufferRecognitionRequest
+    private var ended = false
+
+    init(_ request: SFSpeechAudioBufferRecognitionRequest) { self.request = request }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+        if !ended { request.append(buffer) }
+    }
+
+    func end() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !ended else { return }
+        ended = true
+        request.endAudio()
     }
 }
 
 public enum SpeechRecognizerError: LocalizedError {
-    case requestUnavailable
     case serviceUnavailable
     case onDeviceRecognitionUnavailable
     case audioInputUnavailable
+    case microphonePermissionRequired
 
     public var errorDescription: String? {
         switch self {
-        case .requestUnavailable:
-            return "Speech recognition request is unavailable."
-        case .serviceUnavailable:
-            return "Speech recognition service is unavailable."
-        case .onDeviceRecognitionUnavailable:
-            return "On-device speech recognition is unavailable for this language or device."
-        case .audioInputUnavailable:
-            return "No usable microphone input is available."
+        case .serviceUnavailable: "Speech recognition is unavailable for this language or device."
+        case .onDeviceRecognitionUnavailable: "On-device speech recognition is unavailable for this language or device."
+        case .audioInputUnavailable: "No usable microphone input is available."
+        case .microphonePermissionRequired: "Microphone permission is required."
         }
+    }
+}
+
+
+/// An already-running foreground-authorized audio source can feed a speech request.
+/// The helper keeps its audio engine alive; buffers outside a dictation are discarded.
+public final class SpeechAudioFeed: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: AudioRequest?
+    public init() {}
+    /// Created outside actor isolation; AVAudioEngine invokes it on its audio queue.
+    public func makeTapHandler() -> AVAudioNodeTapBlock {
+        { @Sendable [self] buffer, _ in append(buffer) }
+    }
+    fileprivate func set(_ request: AudioRequest?) {
+        lock.lock(); defer { lock.unlock() }
+        self.request = request
+    }
+    public func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock(); defer { lock.unlock() }
+        request?.append(buffer)
     }
 }

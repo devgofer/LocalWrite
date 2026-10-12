@@ -24,7 +24,7 @@ struct LocalWriteSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("Current shortcut: \\(modifierLabel) + Space")
+                Text("Current shortcut: \(modifierLabel) + Space")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -51,11 +51,14 @@ struct LocalWriteSettingsView: View {
                     isReady: controller.speechAuthorized
                 )
 
-                if !controller.speechAuthorized {
-                    Button("Request Speech Access") {
+                if !controller.speechAuthorized || !controller.microphoneAuthorized {
+                    Button("Request Speech & Microphone Access") {
                         controller.requestSpeechAuthorization()
                     }
                 }
+
+                PermissionRow(title: "Microphone", isReady: controller.microphoneAuthorized)
+                Button("Refresh Status") { controller.refreshPermissions() }
 
                 PermissionRow(
                     title: "Foundation Model",
@@ -69,6 +72,7 @@ struct LocalWriteSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .onAppear { controller.refreshPermissions() }
         .formStyle(.grouped)
         .scenePadding()
         .frame(width: 420)

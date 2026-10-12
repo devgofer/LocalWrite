@@ -3,7 +3,7 @@ import SwiftUI
 import LocalWriteCore
 
 final class CapsulePanel: NSPanel {
-    private var isVisible = false
+    private var capsuleVisible = false
 
     init() {
         super.init(
@@ -32,8 +32,8 @@ final class CapsulePanel: NSPanel {
             x: screen.visibleFrame.midX - frame.width / 2,
             y: screen.visibleFrame.minY + 76
         ))
-        if !isVisible {
-            isVisible = true
+        if !capsuleVisible {
+            capsuleVisible = true
             alphaValue = 0
             orderFrontRegardless()
         }
@@ -44,15 +44,12 @@ final class CapsulePanel: NSPanel {
     }
 
     func hide() {
-        guard isVisible else { orderOut(nil); return }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.14
-            animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            self?.isVisible = false
-            self?.orderOut(nil)
-        })
+        // Avoid an old animation completion hiding a new recording session.
+        capsuleVisible = false
+        alphaValue = 0
+        orderOut(nil)
     }
+
 }
 
 struct CapsuleView: View {

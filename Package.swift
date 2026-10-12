@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 
 import PackageDescription
 
@@ -9,6 +9,7 @@ let package = Package(
         .macOS(.v26)
     ],
     products: [
+        .library(name: "LocalWriteKeyboardBridge", targets: ["LocalWriteKeyboardBridge"]),
         .library(
             name: "LocalWriteCore",
             targets: ["LocalWriteCore"]
@@ -19,6 +20,8 @@ let package = Package(
         )
     ],
     targets: [
+        .target(name: "LocalWriteKeyboardBridge"),
+        .testTarget(name: "LocalWriteKeyboardBridgeTests", dependencies: ["LocalWriteKeyboardBridge"]),
         .target(
             name: "LocalWriteCore",
             path: "Sources/LocalWriteCore"
@@ -26,7 +29,13 @@ let package = Package(
         .executableTarget(
             name: "LocalWriteMac",
             dependencies: ["LocalWriteCore"],
-            path: "Apps/LocalWrite-macOS"
+            path: "Apps/LocalWrite-macOS",
+            exclude: ["Info.plist", "LocalWrite.entitlements"]
+        ),
+        .testTarget(
+            name: "LocalWriteMacTests",
+            dependencies: ["LocalWriteMac"],
+            path: "Tests/LocalWriteMacTests"
         ),
         .testTarget(
             name: "LocalWriteCoreTests",

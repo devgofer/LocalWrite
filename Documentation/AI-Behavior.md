@@ -28,3 +28,10 @@ LocalWrite is a speech cleanup layer, not a writing replacement.
 If the user said it naturally and it is already understandable, **leave it alone**.
 
 The Foundation Models prompt is intentionally short because Apple's current guidance recommends concise, imperative instructions and notes that prompts contribute to the model's context size.
+
+
+## Result validation (2026-10-06)
+
+The engine rejects empty model output. It accepts punctuation and spacing changes, and a limited set of leading hesitation removals. If the model adds, drops, translates, or replaces wording, the engine returns the original transcript. This conservative policy prioritizes retaining meaning and mixed-language wording; grammar rewrites can therefore fall back to the original. Decimal punctuation, symbols, and English word boundaries are preserved by the validation.
+
+Run `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh Scripts/evaluate-refinement.sh` for three live-model smoke cases. These checks complement deterministic unit tests; they do not establish semantic correctness for all possible speech.

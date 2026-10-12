@@ -14,3 +14,7 @@ Package.resolved
 
 # macOS
 *.dSYM
+
+# iOS local verification build
+build-ios/
+build-device/
