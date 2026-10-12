@@ -1,37 +1,66 @@
 import SwiftUI
 import AVFoundation
+import LocalWriteKeyboardBridge
 
 @main
 struct LocalWriteApp: App {
-    var body: some Scene { WindowGroup { KeyboardHelperView() } }
+    var body: some Scene { WindowGroup { HomeView() } }
 }
 
-struct KeyboardHelperView: View {
-    @StateObject private var helper = KeyboardVoiceHelper()
+struct HomeView: View {
+    @StateObject private var host = VoiceSessionHost()
+    @State private var language = SharedSettings.shared().targetLanguage
+    @State private var minutes = SharedSettings.shared().sessionMinutes
+
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: helper.recording ? "mic.fill" : "keyboard")
-                .font(.system(size: 48)).foregroundStyle(helper.recording ? .red : .primary)
-            Text("LocalWrite 語音鍵盤").font(.title2.bold())
-            Text(helper.message).multilineTextAlignment(.center)
-            if helper.enabled || helper.preparing {
-                Button("取消錄音") { helper.stop() }.buttonStyle(.bordered)
-            } else {
-                Text("首次使用：設定 → 一般 → 鍵盤 → 鍵盤 → 加入 LocalWrite，並允許完整取用。")
-                    .font(.footnote).foregroundStyle(.secondary)
-                Text("在鍵盤點麥克風開始說話，再點一次潤稿並填入。")
-                    .font(.footnote)
+        NavigationStack {
+            List {
+                Section {
+                    VStack(spacing: 14) {
+                        Image(systemName: host.warm ? "mic.fill" : "mic")
+                            .font(.system(size: 40, weight: .medium))
+                            .foregroundStyle(host.warm ? Color.accentColor : .secondary)
+                            .frame(width: 84, height: 84)
+                            .background(Circle().fill(Color(.secondarySystemFill)))
+                        Text(host.message).multilineTextAlignment(.center)
+                        if host.warm, let expiresAt = host.expiresAt {
+                            Text("剩餘 \(Text(timerInterval: Date.now...expiresAt, countsDown: true))")
+                                .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                            Button("關閉麥克風", role: .destructive) { host.endSession() }
+                                .buttonStyle(.bordered)
+                        } else {
+                            Button("開啟麥克風") { Task { await host.startSession() } }
+                                .buttonStyle(.borderedProminent).disabled(host.starting)
+                        }
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
+                Section("設定") {
+                    Picker("翻譯成", selection: $language) {
+                        ForEach(TranslationLanguage.all) { Text($0.displayName).tag($0.code) }
+                    }
+                    Picker("麥克風保持開啟", selection: $minutes) {
+                        ForEach(SharedSettings.sessionMinuteChoices, id: \.self) { Text("\($0) 分鐘").tag($0) }
+                    }
+                }
+                Section("第一次使用") {
+                    Text("設定 → 一般 → 鍵盤 → 鍵盤 → 新增鍵盤 → LocalWrite，然後開啟「允許完整取用」。")
+                    Text("麥克風開啟期間，在鍵盤點一下開始說話，再點一下就會整理或翻譯後填入。")
+                }
+                .font(.footnote).foregroundStyle(.secondary)
             }
+            .navigationTitle("LocalWrite")
         }
-        .padding(28)
-        .onOpenURL { helper.open($0) }
+        .onChange(of: language) { _, value in SharedSettings.shared().targetLanguage = value }
+        .onChange(of: minutes) { _, value in SharedSettings.shared().sessionMinutes = value }
+        .onOpenURL { host.open($0) }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { notification in
             guard let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   type == AVAudioSession.InterruptionType.began.rawValue else { return }
-            helper.stop(message: "錄音被中斷，請回到鍵盤重新點麥克風。")
+            host.endSession(message: "麥克風被其他 App 中斷。下次點鍵盤麥克風會再開啟一次。")
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)) { _ in
-            helper.stop(message: "音訊服務已重啟，請回到鍵盤重新點麥克風。")
+            host.endSession(message: "音訊服務已重啟。下次點鍵盤麥克風會再開啟一次。")
         }
     }
 }

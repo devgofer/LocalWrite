@@ -70,4 +70,12 @@ final class SpeechSessionTests: XCTestCase {
         XCTAssertEqual(session.tick(at: 60), .endAudio)
         XCTAssertEqual(session.tick(at: 63), .failed("No speech detected. Please try again."))
     }
+
+    func testKeyboardDictationRunsPastSixtySecondsUntilItsLimit() {
+        var session = SpeechSession()
+        let id = session.begin(at: 0, maxDuration: 180)
+        _ = session.receive(id: id, text: "long thought", final: false, error: nil)
+        XCTAssertNil(session.tick(at: 90))
+        XCTAssertEqual(session.tick(at: 180), .endAudio)
+    }
 }

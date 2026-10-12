@@ -4,57 +4,50 @@ import XCTest
 final class KeyboardExchangeTests: XCTestCase {
     func testResultInsertedOnlyOnceIntoOriginalDocument() {
         var delivery = KeyboardDelivery()
-        let session = UUID(), document = UUID()
-        let request = delivery.begin(sessionID: session, documentID: document)
-        let result = KeyboardSnapshot(sessionID: session, requestID: request, phase: .completed, text: "Hello.")
+        let document = UUID()
+        let request = delivery.begin(documentID: document)
+        let result = VoiceState(sessionID: UUID(), phase: .done, requestID: request, text: "Hello.",
+                                expiresAt: .now.addingTimeInterval(60))
         XCTAssertNil(delivery.consume(result, documentID: UUID()))
         XCTAssertEqual(delivery.consume(result, documentID: document), "Hello.")
         XCTAssertNil(delivery.consume(result, documentID: document))
     }
-    func testCanceledOrExpiredOrUnrelatedResultsAreIgnored() {
+
+    func testUnrelatedOrUnfinishedOrCanceledResultsAreIgnored() {
         var delivery = KeyboardDelivery()
-        let session = UUID(), document = UUID()
-        let request = delivery.begin(sessionID: session, documentID: document)
-        var result = KeyboardSnapshot(sessionID: session, requestID: request, phase: .completed, text: "old", updatedAt: .now.addingTimeInterval(-121))
-        XCTAssertNil(delivery.consume(result, documentID: document))
-        result.updatedAt = .now; result.requestID = UUID()
-        XCTAssertNil(delivery.consume(result, documentID: document))
-        result.requestID = request; delivery.cancel()
-        XCTAssertNil(delivery.consume(result, documentID: document))
-    }
-    func testCommandsMustBelongToLiveSession() {
-        let session = UUID()
-        let command = KeyboardCommand(sessionID: session, requestID: UUID(), kind: .start)
-        XCTAssertTrue(command.isValid(for: session))
-        XCTAssertFalse(command.isValid(for: UUID()))
-        XCTAssertFalse(command.isValid(for: session, at: .now.addingTimeInterval(10)))
-    }
-    func testCompletedResultSurvivesBackgroundSuspensionButRecordingNeedsHeartbeat() {
-        let now = Date()
-        var result = KeyboardSnapshot(sessionID: UUID(), phase: .completed, text: "Done", updatedAt: now)
-        XCTAssertTrue(result.isLive(at: now.addingTimeInterval(30)))
-        XCTAssertFalse(result.isLive(at: now.addingTimeInterval(121)))
-        result.phase = .recording
-        XCTAssertFalse(result.isLive(at: now.addingTimeInterval(5)))
-    }
-    func testKeyboardRecreationRecoversOnlyOriginalDocumentAndRequest() {
         let document = UUID()
-        let ticket = KeyboardLaunchRequest(sessionID: UUID(), requestID: UUID())
-        let pending = KeyboardPendingRequest(ticket: ticket, documentID: document, before: "A", after: "B")
-        var replacement = KeyboardDelivery()
-        XCTAssertFalse(replacement.resume(pending, documentID: UUID()))
-        XCTAssertFalse(replacement.resume(pending, documentID: document, at: ticket.createdAt.addingTimeInterval(121)))
-        XCTAssertTrue(replacement.resume(pending, documentID: document))
-        let result = KeyboardSnapshot(sessionID: ticket.sessionID, requestID: ticket.requestID, phase: .completed, text: "hello")
-        XCTAssertEqual(replacement.consume(result, documentID: document), "hello")
-        XCTAssertNil(replacement.consume(result, documentID: document))
+        let request = delivery.begin(documentID: document)
+        var state = VoiceState(sessionID: UUID(), phase: .done, requestID: UUID(), text: "old",
+                               expiresAt: .now.addingTimeInterval(60))
+        XCTAssertNil(delivery.consume(state, documentID: document))
+        state.requestID = request; state.phase = .processing
+        XCTAssertNil(delivery.consume(state, documentID: document))
+        state.phase = .done; delivery.cancel()
+        XCTAssertNil(delivery.consume(state, documentID: document))
     }
-    func testKeyboardLaunchRequiresMatchingFreshTicket() throws {
-        let ticket = KeyboardLaunchRequest(sessionID: UUID(), requestID: UUID())
+
+    func testWarmSessionNeedsHeartbeatAndExpiry() {
+        let now = Date()
+        var state = VoiceState(sessionID: UUID(), phase: .idle, expiresAt: now.addingTimeInterval(600), updatedAt: now)
+        XCTAssertTrue(state.isWarm(at: now.addingTimeInterval(3)))
+        XCTAssertFalse(state.isWarm(at: now.addingTimeInterval(VoiceState.heartbeatTimeout + 1)))
+        state.expiresAt = now.addingTimeInterval(1)
+        XCTAssertFalse(state.isWarm(at: now.addingTimeInterval(2)))
+        state.expiresAt = now.addingTimeInterval(600); state.phase = .ended
+        XCTAssertFalse(state.isWarm(at: now))
+    }
+
+    func testCommandsExpire() {
+        let command = KeyboardCommand(requestID: UUID(), kind: .start, mode: .translate, targetLanguage: "ja")
+        XCTAssertTrue(command.isFresh())
+        XCTAssertFalse(command.isFresh(at: .now.addingTimeInterval(11)))
+    }
+
+    func testLaunchRequiresMatchingFreshTicket() throws {
+        let ticket = KeyboardLaunchRequest()
         XCTAssertTrue(ticket.matches(ticket.url))
-        XCTAssertFalse(ticket.matches(URL(string: "localwrite://dictate/" + UUID().uuidString)!))
+        XCTAssertFalse(ticket.matches(URL(string: "localwrite://session/" + UUID().uuidString)!))
         XCTAssertFalse(ticket.matches(ticket.url, at: ticket.createdAt.addingTimeInterval(31)))
-        XCTAssertFalse(ticket.matches(ticket.url, at: ticket.createdAt.addingTimeInterval(-3)))
         XCTAssertFalse(ticket.matches(URL(string: ticket.url.absoluteString + "?other=1")!))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -65,15 +58,34 @@ final class KeyboardExchangeTests: XCTestCase {
         try exchange.clearLaunchRequest()
         XCTAssertNil(exchange.launchRequest())
     }
-    func testAtomicExchangeUsesSeparateMailboxes() throws {
+
+    func testExchangeRoundTripsStateAndCommand() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let exchange = KeyboardExchange(directory: directory)
-        let session = UUID()
-        let snapshot = KeyboardSnapshot(sessionID: session, phase: .ready)
-        let command = KeyboardCommand(sessionID: session, requestID: UUID(), kind: .start)
-        try exchange.write(snapshot); try exchange.write(command)
-        XCTAssertEqual(exchange.snapshot(), snapshot)
-        XCTAssertEqual(exchange.command()?.id, command.id)
+        let state = VoiceState(sessionID: UUID(), phase: .recording, text: "嗨", expiresAt: .now.addingTimeInterval(60))
+        let command = KeyboardCommand(requestID: UUID(), kind: .finish)
+        try exchange.write(state); try exchange.write(command)
+        XCTAssertEqual(exchange.state()?.text, "嗨")
+        XCTAssertEqual(exchange.command(), command)
+    }
+
+    func testSharedSettingsDefaults() {
+        let defaults = UserDefaults(suiteName: "test.\(UUID().uuidString)")!
+        let settings = SharedSettings(defaults: defaults)
+        XCTAssertEqual(settings.mode, .clean)
+        XCTAssertEqual(settings.sessionMinutes, 15)
+        settings.mode = .translate; settings.targetLanguage = "ja"
+        XCTAssertEqual(settings.mode, .translate)
+        XCTAssertEqual(TranslationLanguage.named(settings.targetLanguage).englishName, "Japanese")
+    }
+
+    func testDarwinSignalDelivers() {
+        let name = "com.devgofer.LocalWrite.test.\(UUID().uuidString)"
+        let received = expectation(description: "signal")
+        let observer = DarwinSignal(observing: name) { received.fulfill() }
+        DarwinSignal.post(name)
+        wait(for: [received], timeout: 2)
+        _ = observer
     }
 }

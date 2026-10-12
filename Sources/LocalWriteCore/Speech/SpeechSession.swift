@@ -14,14 +14,16 @@ struct SpeechSession {
     private var startedAt: TimeInterval = 0
     private var lastSpeechAt: TimeInterval?
     private var finishingAt: TimeInterval?
+    private var maxDuration: TimeInterval = 60
 
-    mutating func begin(at time: TimeInterval) -> UUID {
+    mutating func begin(at time: TimeInterval, maxDuration: TimeInterval = 60) -> UUID {
         let id = UUID()
         self.id = id
         transcript = ""
         startedAt = time
         lastSpeechAt = nil
         finishingAt = nil
+        self.maxDuration = maxDuration
         return id
     }
 
@@ -63,7 +65,7 @@ struct SpeechSession {
             id = nil
             return .failed("No speech detected. Please try again.")
         }
-        if time - startedAt >= 60 || lastSpeechAt.map({ time - $0 >= 1.25 }) == true {
+        if time - startedAt >= maxDuration || lastSpeechAt.map({ time - $0 >= 1.25 }) == true {
             finishingAt = time
             return .endAudio
         }

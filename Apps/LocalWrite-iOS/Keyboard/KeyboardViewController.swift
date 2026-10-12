@@ -4,243 +4,322 @@ import LocalWriteKeyboardBridge
 
 @MainActor
 final class KeyboardViewController: UIInputViewController {
-    private let microphone = UIButton(type: .system)
-    private let status = UILabel()
-    private let micSlot = UIView()
-    private var launchLink: UIHostingController<KeyboardLaunchKey>?
-    private var launching = false
-    private var documentReady = false
-    private var launchTime: Date?
-    private var exchange: KeyboardExchange?
-    private var delivery = KeyboardDelivery()
-    private var poll: Task<Void, Never>?
-    private var waiting = false
-    private var finishing = false
-    private var before: String?
-    private var after: String?
-    private var commandTime: Date?
-    private var notice: String?
+    private lazy var model = KeyboardModel(controller: self)
+    private var stateSignal: DarwinSignal?
+    private var refresh: Task<Void, Never>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .secondarySystemBackground
-        let delete = key("delete.left", label: "刪除", action: #selector(deleteBackward))
-        let enter = key("return", label: "換行", action: #selector(insertNewline))
-        microphone.setImage(UIImage(systemName: "mic.fill"), for: .normal)
-        microphone.accessibilityLabel = "開始語音輸入"
-        microphone.accessibilityIdentifier = "keyboard.microphone"
-        microphone.addTarget(self, action: #selector(toggleMicrophone), for: .touchUpInside)
-        microphone.tintColor = .systemBlue
-        microphone.backgroundColor = .tertiarySystemBackground
-        microphone.layer.cornerRadius = 24
-        // A long press provides keyboard switching without an extra globe key.
-        enter.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(switchKeyboard(_:))))
-        enter.accessibilityHint = "長按切換鍵盤"
-        let link = UIHostingController(rootView: KeyboardLaunchKey { [weak self] in self?.prepareLaunch() })
-        launchLink = link
-        addChild(link); micSlot.addSubview(link.view); link.didMove(toParent: self)
-        micSlot.addSubview(microphone)
-        for child in [link.view!, microphone] {
-            child.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                child.leadingAnchor.constraint(equalTo: micSlot.leadingAnchor),
-                child.trailingAnchor.constraint(equalTo: micSlot.trailingAnchor),
-                child.topAnchor.constraint(equalTo: micSlot.topAnchor),
-                child.bottomAnchor.constraint(equalTo: micSlot.bottomAnchor)
-            ])
-        }
-        link.view.backgroundColor = .clear
-        let row = UIStackView(arrangedSubviews: [delete, micSlot, enter])
-        row.axis = .horizontal; row.spacing = 20; row.distribution = .fillEqually
-        status.font = .preferredFont(forTextStyle: .caption2)
-        status.textAlignment = .center; status.numberOfLines = 2; status.textColor = .secondaryLabel
-        let stack = UIStackView(arrangedSubviews: [row, status])
-        stack.axis = .vertical; stack.spacing = 8; stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        let host = UIHostingController(rootView: KeyboardView(model: model))
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        addChild(host); view.addSubview(host.view); host.didMove(toParent: self)
+        let height = view.heightAnchor.constraint(equalToConstant: 236)
+        height.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
-            row.heightAnchor.constraint(equalToConstant: 58)
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            height
         ])
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        exchange = hasFullAccess ? KeyboardExchange.shared() : nil
-        launching = false
-        documentReady = true
-        poll?.cancel()
-        poll = Task { @MainActor [weak self] in
-            // UIKit connects the host's document proxy after its appearance callback.
-            // Reading documentIdentifier from viewWillAppear can raise an ObjC exception.
+        model.showsGlobe = needsInputModeSwitchKey
+        stateSignal = DarwinSignal(observing: DarwinSignal.state) { [weak self] in
+            Task { @MainActor in self?.model.refresh() }
+        }
+        refresh?.cancel()
+        refresh = Task { @MainActor [weak self] in
+            // UIKit connects the document proxy after appearance; reading it from
+            // viewWillAppear can raise an Objective-C exception.
             do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
-            guard let self, self.documentReady else { return }
-            if self.delivery.requestID == nil, let pending = self.exchange?.pendingRequest(),
-               self.delivery.resume(pending, documentID: self.textDocumentProxy.documentIdentifier) {
-                self.before = pending.before; self.after = pending.after
-                self.launchTime = pending.ticket.createdAt; self.waiting = true
-            }
-            while !Task.isCancelled && self.documentReady {
-                self.update()
-                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            self?.model.attach()
+            // Darwin signals drive updates; this slow tick only notices expiry.
+            while !Task.isCancelled {
+                self?.model.refresh()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
-        documentReady = false
-        // Keep the request while our own launch opens LocalWrite. On returning,
-        // the document ID and surrounding text must still match before insertion.
-        if !launching { cancelPending() }
-        poll?.cancel(); poll = nil
+        refresh?.cancel(); refresh = nil
+        stateSignal = nil
+        model.detach()
         super.viewWillDisappear(animated)
-    }
-
-    private func key(_ icon: String, label: String, action: Selector) -> UIButton {
-        let button = UIButton(type: .system)
-        button.setImage(UIImage(systemName: icon), for: .normal)
-        button.accessibilityLabel = label
-        button.backgroundColor = .tertiarySystemBackground
-        button.tintColor = .label; button.layer.cornerRadius = 14
-        button.addTarget(self, action: action, for: .touchUpInside)
-        return button
-    }
-
-    @objc private func deleteBackward() { cancelPending(); textDocumentProxy.deleteBackward() }
-    @objc private func insertNewline() { cancelPending(); textDocumentProxy.insertText("\n") }
-    @objc private func switchKeyboard(_ gesture: UILongPressGestureRecognizer) {
-        if gesture.state == .began { cancelPending(); advanceToNextInputMode() }
-    }
-
-    private func prepareLaunch() -> URL? {
-        guard documentReady, hasFullAccess, delivery.requestID == nil,
-              let exchange = KeyboardExchange.shared() else {
-            notice = "請在鍵盤設定允許 LocalWrite 完整取用。"; status.text = notice
-            return nil
-        }
-        self.exchange = exchange
-        let session = UUID()
-        let request = delivery.begin(sessionID: session, documentID: textDocumentProxy.documentIdentifier)
-        let ticket = KeyboardLaunchRequest(sessionID: session, requestID: request)
-        before = textDocumentProxy.documentContextBeforeInput
-        after = textDocumentProxy.documentContextAfterInput
-        do {
-            try exchange.write(KeyboardPendingRequest(ticket: ticket,
-                documentID: textDocumentProxy.documentIdentifier, before: before, after: after))
-            try exchange.write(ticket)
-            launching = true; launchTime = .now; waiting = true; notice = nil
-            update()
-            return ticket.url
-        } catch {
-            cancelPending(); status.text = "無法啟動錄音，請再試一次。"
-            return nil
-        }
-    }
-
-    @objc private func toggleMicrophone() {
-        guard !waiting, !finishing,
-              let exchange, let snapshot = exchange.snapshot(), snapshot.isLive(),
-              let request = delivery.requestID,
-              snapshot.requestID == request, snapshot.phase == .recording else { return }
-        do {
-            finishing = true
-            try exchange.write(KeyboardCommand(sessionID: snapshot.sessionID, requestID: request, kind: .finish))
-            update()
-        } catch { cancelPending(); status.text = "無法結束錄音，請重試。" }
-    }
-
-    private func update() {
-        guard documentReady else { return }
-        let pending = delivery.requestID != nil
-        microphone.isHidden = !pending
-        launchLink?.view.isHidden = pending
-        microphone.isEnabled = !waiting && !finishing
-        guard hasFullAccess else { status.text = "請在設定允許鍵盤完整取用。"; return }
-        guard pending else { status.text = notice ?? ""; return }
-        guard delivery.belongsTo(documentID: textDocumentProxy.documentIdentifier) else {
-            cancelPending(); notice = "輸入欄位已變更，請重新點麥克風。"; update(); return
-        }
-        guard let snapshot = exchange?.snapshot(), snapshot.sessionID == delivery.sessionID,
-              snapshot.isLive() else {
-            if waiting, let launchTime, Date.now.timeIntervalSince(launchTime) < 90 {
-                status.text = "正在啟動錄音⋯"; return
-            }
-            cancelPending(); notice = "錄音已結束或未能啟動，請重新點麥克風。"; update(); return
-        }
-        if snapshot.requestID == delivery.requestID, delivery.requestID != nil {
-            waiting = snapshot.phase == .starting
-            switch snapshot.phase {
-            case .starting:
-                status.text = "正在準備麥克風⋯"
-            case .recording:
-                status.text = finishing ? "正在結束收音⋯" : "聆聽中，再點一次完成"
-                microphone.setImage(UIImage(systemName: "stop.fill"), for: .normal)
-                microphone.tintColor = .systemRed
-                microphone.accessibilityLabel = "結束語音並填入"
-            case .refining: finishing = true; status.text = "潤稿中⋯"
-            case .completed:
-                guard before == textDocumentProxy.documentContextBeforeInput,
-                      after == textDocumentProxy.documentContextAfterInput else {
-                    cancelPending(); notice = "輸入位置已變更，已取消填入。"; status.text = notice; return
-                }
-                if let text = delivery.consume(snapshot, documentID: textDocumentProxy.documentIdentifier) {
-                    // Claim before insertion to prevent replay after controller recreation.
-                    do { try exchange?.clearPendingRequest() }
-                    catch { notice = "無法確認結果已取用，請重試。"; cancelPending(); return }
-                    textDocumentProxy.insertText(text)
-                    if let request = snapshot.requestID {
-                        try? exchange?.write(KeyboardCommand(sessionID: snapshot.sessionID, requestID: request, kind: .cancel))
-                    }
-                    finishing = false; commandTime = nil; launchTime = nil
-                    microphone.isHidden = true; launchLink?.view.isHidden = false
-                }
-            case .failed:
-                cancelPending(); notice = snapshot.message; status.text = notice; return
-            default: break
-            }
-        }
-        if delivery.requestID == nil {
-            status.text = notice ?? ""
-            microphone.setImage(UIImage(systemName: "mic.fill"), for: .normal)
-            microphone.tintColor = .systemBlue
-            microphone.accessibilityLabel = "開始語音輸入"
-        }
-        microphone.isEnabled = !waiting && !finishing
-    }
-
-    private func cancelPending() {
-        if let request = delivery.requestID, let session = delivery.sessionID {
-            try? exchange?.write(KeyboardCommand(sessionID: session, requestID: request, kind: .cancel))
-        }
-        if exchange?.pendingRequest()?.ticket.requestID == delivery.requestID {
-            try? exchange?.clearPendingRequest()
-            try? exchange?.clearLaunchRequest()
-        }
-        delivery.cancel(); waiting = false; finishing = false; commandTime = nil
-        launching = false; launchTime = nil
-        microphone.isHidden = true; launchLink?.view.isHidden = false
-        microphone.isEnabled = true
     }
 }
 
-/// SwiftUI Link supplies the public URL-opening path available to the keyboard.
-/// The ticket is written synchronously when tapped, before the system opens the app.
-private struct KeyboardLaunchKey: View {
-    let prepare: @MainActor () -> URL?
-    var body: some View {
-        Link(destination: URL(string: "localwrite://dictate/start")!) {
-            Image(systemName: "mic")
-                .font(.title2)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
+@MainActor
+final class KeyboardModel: ObservableObject {
+    enum Mic { case unavailable, cold, ready, recording, processing }
+
+    @Published private(set) var mic: Mic = .cold
+    @Published private(set) var transcript = ""
+    @Published private(set) var notice = ""
+    @Published var mode: DictationMode { didSet { settings.mode = mode } }
+    @Published var showsGlobe = true
+
+    private weak var controller: KeyboardViewController?
+    private let settings = SharedSettings.shared()
+    private var exchange: KeyboardExchange?
+    private var delivery = KeyboardDelivery()
+    private var sentAt: Date?
+    private var attached = false
+
+    init(controller: KeyboardViewController) {
+        self.controller = controller
+        mode = settings.mode
+    }
+
+    var languageName: String { TranslationLanguage.named(settings.targetLanguage).displayName }
+    private var proxy: UITextDocumentProxy? { controller?.textDocumentProxy }
+
+    func attach() {
+        attached = true
+        exchange = controller?.hasFullAccess == true ? KeyboardExchange.shared() : nil
+        mode = settings.mode
+        refresh()
+    }
+
+    func detach() {
+        if delivery.requestID != nil { send(.cancel) }
+        delivery.cancel(); sentAt = nil
+        attached = false
+    }
+
+    func refresh() {
+        guard attached, let controller, let proxy else { return }
+        guard controller.hasFullAccess, let exchange else {
+            mic = .unavailable; notice = "請到 設定 → 一般 → 鍵盤 → LocalWrite 開啟「允許完整取用」。"; return
         }
-        .accessibilityLabel("開始語音輸入")
-        .accessibilityIdentifier("keyboard.microphone")
-        .environment(\.openURL, OpenURLAction { _ in
-            guard let url = prepare() else { return .handled }
-            return .systemAction(url)
-        })
+        guard let state = exchange.state(), state.isWarm() else {
+            if delivery.requestID != nil { delivery.cancel(); notice = "麥克風已關閉，請再點一次麥克風。" }
+            mic = .cold; transcript = ""; return
+        }
+        guard let request = delivery.requestID else { mic = .ready; transcript = ""; return }
+        guard delivery.belongsTo(documentID: proxy.documentIdentifier) else {
+            send(.cancel); delivery.cancel(); notice = "輸入框已變更，已取消。"; mic = .ready; return
+        }
+        guard state.requestID == request else {
+            // The app has not picked up the start command yet.
+            if let sentAt, Date.now.timeIntervalSince(sentAt) > 4 {
+                delivery.cancel(); notice = "LocalWrite 沒有回應，請再試一次。"; mic = .ready
+            }
+            return
+        }
+        switch state.phase {
+        case .recording:
+            mic = .recording; transcript = state.text
+        case .processing:
+            mic = .processing; transcript = state.text
+        case .done:
+            if let text = delivery.consume(state, documentID: proxy.documentIdentifier) {
+                proxy.insertText(text)
+                notice = state.usedRawFallback ? state.message : ""
+            }
+            mic = .ready; transcript = ""; sentAt = nil
+        case .failed:
+            delivery.cancel(); notice = state.message; mic = .ready; transcript = ""
+        case .idle, .ended:
+            delivery.cancel(); mic = .ready; transcript = ""
+        }
+    }
+
+    func tapMic() {
+        switch mic {
+        case .ready:
+            guard let proxy else { return }
+            notice = ""; transcript = ""
+            _ = delivery.begin(documentID: proxy.documentIdentifier)
+            sentAt = .now
+            send(.start)
+            mic = .recording
+        case .recording:
+            send(.finish)
+            mic = .processing
+        case .processing:
+            send(.cancel); delivery.cancel(); mic = .ready; transcript = ""
+        case .cold, .unavailable:
+            break
+        }
+    }
+
+    /// Called synchronously when the cold mic Link is tapped, before iOS opens the app.
+    func prepareLaunch() -> URL? {
+        guard controller?.hasFullAccess == true, let exchange = exchange ?? KeyboardExchange.shared() else {
+            notice = "請到 設定 → 一般 → 鍵盤 → LocalWrite 開啟「允許完整取用」。"; return nil
+        }
+        self.exchange = exchange
+        let ticket = KeyboardLaunchRequest()
+        do { try exchange.write(ticket) } catch { notice = "無法開啟 LocalWrite，請再試一次。"; return nil }
+        notice = "開啟麥克風後，滑回這裡就能說話。"
+        return ticket.url
+    }
+
+    func insertSpace() { proxy?.insertText(" ") }
+    func insertReturn() { proxy?.insertText("\n") }
+    func deleteBackward() { proxy?.deleteBackward() }
+    func nextKeyboard() { controller?.advanceToNextInputMode() }
+
+    private func send(_ kind: KeyboardCommand.Kind) {
+        guard let exchange, let request = delivery.requestID else { return }
+        let command = KeyboardCommand(requestID: request, kind: kind, mode: mode, targetLanguage: settings.targetLanguage)
+        do { try exchange.write(command) } catch {
+            delivery.cancel(); notice = "無法與 LocalWrite 溝通，請再試一次。"; mic = .ready; return
+        }
+        DarwinSignal.post(DarwinSignal.command)
+    }
+}
+
+struct KeyboardView: View {
+    @ObservedObject var model: KeyboardModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Picker("模式", selection: $model.mode) {
+                Text("整理").tag(DictationMode.clean)
+                Text("翻譯成\(model.languageName)").tag(DictationMode.translate)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 260)
+            .disabled(model.mic == .recording || model.mic == .processing)
+
+            Text(status)
+                .font(.footnote)
+                .foregroundStyle(model.mic == .recording ? .primary : .secondary)
+                .lineLimit(2).truncationMode(.head)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: 34)
+
+            MicButton(model: model)
+
+            HStack(spacing: 6) {
+                if model.showsGlobe {
+                    KeyButton(systemImage: "globe", label: "下一個鍵盤", width: 44) { model.nextKeyboard() }
+                }
+                KeyButton(title: "空格", label: "空格") { model.insertSpace() }
+                RepeatingDeleteKey { model.deleteBackward() }
+                KeyButton(systemImage: "return", label: "換行", width: 64) { model.insertReturn() }
+            }
+        }
+        .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 6)
+    }
+
+    private var status: String {
+        switch model.mic {
+        case .unavailable: model.notice
+        case .cold: model.notice.isEmpty ? "點麥克風開啟 LocalWrite，滑回這裡就能說話" : model.notice
+        case .ready: model.notice.isEmpty ? "點麥克風開始說話" : model.notice
+        case .recording: model.transcript.isEmpty ? "聆聽中⋯" : model.transcript
+        case .processing: model.mode == .clean ? "整理中⋯" : "翻譯中⋯"
+        }
+    }
+}
+
+private struct MicButton: View {
+    @ObservedObject var model: KeyboardModel
+
+    var body: some View {
+        switch model.mic {
+        case .cold:
+            // SwiftUI Link is the URL-opening path still available to keyboards.
+            Link(destination: URL(string: "localwrite://session")!) { circle("mic", tint: .accentColor, filled: false) }
+                .environment(\.openURL, OpenURLAction { _ in
+                    guard let url = model.prepareLaunch() else { return .handled }
+                    return .systemAction(url)
+                })
+                .accessibilityLabel("開啟 LocalWrite 麥克風")
+        case .unavailable:
+            circle("mic.slash", tint: .secondary, filled: false).accessibilityLabel("需要完整取用")
+        case .ready:
+            Button(action: model.tapMic) { circle("mic.fill", tint: .accentColor, filled: true) }
+                .accessibilityLabel("開始說話")
+        case .recording:
+            Button(action: model.tapMic) { circle("stop.fill", tint: .red, filled: true) }
+                .accessibilityLabel("完成並填入")
+        case .processing:
+            Button(action: model.tapMic) {
+                ZStack { Circle().fill(Color(.tertiarySystemFill)); ProgressView() }.frame(width: 64, height: 64)
+            }
+            .accessibilityLabel("取消")
+        }
+    }
+
+    private func circle(_ image: String, tint: Color, filled: Bool) -> some View {
+        Image(systemName: image)
+            .font(.system(size: 26, weight: .semibold))
+            .foregroundStyle(filled ? Color.white : tint)
+            .frame(width: 64, height: 64)
+            .background(Circle().fill(filled ? AnyShapeStyle(tint) : AnyShapeStyle(Color(.tertiarySystemFill))))
+            .overlay(Circle().stroke(filled ? .clear : tint, lineWidth: 1.5))
+    }
+}
+
+private struct KeyButton: View {
+    var title: String? = nil
+    var systemImage: String? = nil
+    let label: String
+    var width: CGFloat? = nil
+    let action: () -> Void
+
+    init(title: String, label: String, action: @escaping () -> Void) {
+        self.title = title; self.label = label; self.action = action
+    }
+    init(systemImage: String, label: String, width: CGFloat, action: @escaping () -> Void) {
+        self.systemImage = systemImage; self.label = label; self.width = width; self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) { KeyFace(title: title, systemImage: systemImage) }
+            .buttonStyle(.plain)
+            .frame(width: width)
+            .frame(maxWidth: width == nil ? .infinity : nil)
+            .accessibilityLabel(label)
+    }
+}
+
+private struct KeyFace: View {
+    var title: String?
+    var systemImage: String?
+    var body: some View {
+        Group {
+            if let systemImage { Image(systemName: systemImage) } else { Text(title ?? "") }
+        }
+        .font(.system(size: 17))
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(.systemBackground).opacity(0.9)))
+        .contentShape(Rectangle())
+    }
+}
+
+/// Deletes once on touch, then repeats while held.
+private struct RepeatingDeleteKey: View {
+    let action: () -> Void
+    @State private var repeating: Task<Void, Never>?
+
+    var body: some View {
+        KeyFace(systemImage: "delete.left")
+            .frame(width: 64)
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard repeating == nil else { return }
+                    action()
+                    repeating = Task { @MainActor in
+                        do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
+                        while !Task.isCancelled {
+                            action()
+                            do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
+                        }
+                    }
+                }
+                .onEnded { _ in repeating?.cancel(); repeating = nil })
+            .accessibilityLabel("刪除")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }

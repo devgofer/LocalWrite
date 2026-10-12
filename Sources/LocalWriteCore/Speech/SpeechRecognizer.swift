@@ -61,7 +61,9 @@ public final class SpeechRecognizer {
             throw SpeechRecognizerError.microphonePermissionRequired
         }
 
-        let id = session.begin(at: ProcessInfo.processInfo.systemUptime)
+        // An external feed has no silence detection: the keyboard user decides when to stop.
+        let id = session.begin(at: ProcessInfo.processInfo.systemUptime,
+                               maxDuration: externalAudioFeed == nil ? 60 : 180)
         partial = onPartialResult
         completion = onFinished
         failure = onError
