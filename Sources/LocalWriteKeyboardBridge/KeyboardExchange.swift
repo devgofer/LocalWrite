@@ -89,11 +89,7 @@ public struct KeyboardCommand: Codable, Equatable, Sendable {
 public struct KeyboardLaunchRequest: Codable, Equatable, Sendable {
     public let id: UUID
     public let createdAt: Date
-    /// The app the keyboard was typing in, when iOS reveals it, so LocalWrite can switch back.
-    public let hostBundleID: String?
-    public init(id: UUID = UUID(), createdAt: Date = .now, hostBundleID: String? = nil) {
-        self.id = id; self.createdAt = createdAt; self.hostBundleID = hostBundleID
-    }
+    public init(id: UUID = UUID(), createdAt: Date = .now) { self.id = id; self.createdAt = createdAt }
     public var url: URL { URL(string: "localwrite://session/\(id.uuidString)")! }
     public func matches(_ url: URL, at now: Date = .now) -> Bool {
         url.scheme == "localwrite" && url.host == "session" &&

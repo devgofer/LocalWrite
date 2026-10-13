@@ -8,4 +8,4 @@ iOS keyboards cannot record audio, so the LocalWrite app holds a warm microphone
 
 Both targets use App Group `group.com.devgofer.LocalWrite`; the keyboard requires Full Access. Acceptance criteria: `Documentation/Keyboard-Requirements.md`.
 
-Automatic return (experimental): when the cold mic opens LocalWrite, the app asks the system "back to <app>" breadcrumb to navigate back, or opens the host bundle ID when the keyboard could identify it (`App/HostReturn.swift`, `Keyboard/HostApp.swift`). Both use undocumented iOS interfaces, guarded so they fail silently; App Review may reject them. Results are logged to `diagnostics.log` in the App Group cache.
+No automatic return: on iOS 26 a keyboard-opened app gets no back-to-app breadcrumb and the host bundle ID reads as null, and identifying the host another way needs undocumented process APIs. After the first activation the app tells the user to swipe back along the bottom edge (decided 2026-10-13). Dictation results are logged to `diagnostics.log` in the App Group cache for debugging.

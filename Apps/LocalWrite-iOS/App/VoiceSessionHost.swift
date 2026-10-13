@@ -38,13 +38,8 @@ final class VoiceSessionHost: ObservableObject {
               let ticket = exchange.launchRequest(), ticket.matches(url) else { return }
         try? exchange.clearLaunchRequest()
         self.exchange = exchange
-        exchange.diagnose("app opened, host=\(ticket.hostBundleID ?? "unknown")")
-        Task {
-            await startSession()
-            // Like Typeless, hop straight back to the field the user was typing in.
-            guard warm else { return }
-            exchange.diagnose("app return: \(await HostReturn.goBack(hostBundleID: ticket.hostBundleID))")
-        }
+        // iOS offers no supported way back to the host app, so the screen says how to return.
+        Task { await startSession() }
     }
 
     func startSession() async {
@@ -77,7 +72,7 @@ final class VoiceSessionHost: ObservableObject {
         state = VoiceState(sessionID: UUID(), phase: .idle, expiresAt: expires)
         warm = true; expiresAt = expires
         setInputMuted(true)
-        message = "已啟用。回到原本的 App，點鍵盤麥克風就能說話。"
+        message = "已啟用。沿螢幕底部往右滑，回到原本的 App，就能直接說話。"
         commandSignal = DarwinSignal(observing: DarwinSignal.command) { [weak self] in
             Task { @MainActor in self?.readCommand() }
         }
@@ -188,7 +183,7 @@ final class VoiceSessionHost: ObservableObject {
             }
             guard let self, !Task.isCancelled, self.state?.requestID == command.requestID else { return }
             // On-device only, to debug cleanup quality; the file stays in the App Group cache.
-            self.exchange?.diagnose("dictation \(command.mode.rawValue) fallback=\(fallback) raw=\(text) out=\(output)")
+            self.exchange?.diagnose("dictation \(command.mode.rawValue) fallback=\(fallback) raw=\(text) out=\(output.replacingOccurrences(of: "\n", with: "⏎"))")
             self.state?.phase = .done; self.state?.text = output; self.state?.usedRawFallback = fallback
             self.state?.message = fallback ? "AI 暫時無法使用，已填入原始文字。" : ""
             self.publish()
